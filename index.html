@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pulsefield Editor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            pf: {
+              bg: '#0B1416', panel: '#151E21', panel2: '#1B262A', line: '#24333A',
+              player: '#FFB347', danger: '#FF4D5E', accent: '#7CFFB2',
+              text: '#D8E2E4', muted: '#7B8D92'
+            }
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="h-screen flex flex-col overflow-hidden bg-pf-bg text-pf-text font-display select-none">
+
+  <header class="h-12 shrink-0 flex items-center gap-4 px-4 bg-pf-panel border-b border-pf-line">
+    <div class="flex items-center gap-2.5">
+      <span class="logo-diamond"></span>
+      <span class="font-bold tracking-[0.22em] text-sm">PULSEFIELD</span>
+      <span class="font-mono text-[10px] text-pf-muted border border-pf-line rounded px-1.5 py-0.5">editor v0.0.1</span>
+    </div>
+
+    <div class="flex items-center gap-1 ml-4">
+      <button id="btn-stop" class="pf-btn" title="Voltar ao início (Home)">⏮</button>
+      <button id="btn-play" class="pf-btn w-24" title="Tocar / pausar (Espaço)">▶ Tocar</button>
+      <span id="time-display" class="font-mono text-sm text-pf-accent ml-3 w-24">00:00.00</span>
+    </div>
+
+    <div class="flex items-center gap-2 min-w-0">
+      <button id="btn-music" class="pf-btn" title="Importar música (MP3, WAV, OGG, FLAC, M4A)">♪ Música</button>
+      <span id="music-name" class="text-xs text-pf-muted truncate max-w-[180px]">sem música</span>
+      <button id="btn-music-clear" class="pf-btn hidden" title="Remover música">✕</button>
+      <input id="volume" type="range" min="0" max="1" step="0.01" class="w-20" title="Volume">
+      <input type="file" id="music-input" accept="audio/*,.mp3,.wav,.ogg,.oga,.opus,.flac,.m4a" class="hidden">
+    </div>
+
+    <div class="ml-auto flex items-center gap-2">
+      <button id="btn-undo" class="pf-btn" title="Desfazer (Ctrl+Z)">↶</button>
+      <button id="btn-redo" class="pf-btn" title="Refazer (Ctrl+Y)">↷</button>
+      <button id="btn-clear" class="pf-btn pf-btn-danger" title="Apagar todos os perigos da fase (Ctrl+Z desfaz)">🗑 Apagar tudo</button>
+      <span class="w-px h-6 bg-pf-line mx-1"></span>
+      <button id="btn-online" class="pf-btn" title="Fases online"><span id="online-dot" class="inline-block w-2 h-2 rounded-full mr-1.5 bg-pf-danger"></span>Online <span id="online-count" class="font-mono text-pf-muted ml-1">off</span></button>
+      <button id="btn-import" class="pf-btn">Importar</button>
+      <button id="btn-export" class="pf-btn">Exportar</button>
+      <button id="btn-test" class="pf-btn pf-btn-primary w-36">◆ Testar (T)</button>
+      <input type="file" id="file-input" accept=".json,application/json" class="hidden">
+    </div>
+  </header>
+
+  <div class="flex flex-1 min-h-0">
+    <nav id="toolbar" class="w-[72px] shrink-0 bg-pf-panel border-r border-pf-line flex flex-col items-center gap-0.5 py-2 overflow-y-auto"></nav>
+
+    <main id="stage-wrap" class="flex-1 min-w-0 relative flex items-center justify-center">
+      <canvas id="stage" class="block rounded-sm"></canvas>
+      <div id="hud" class="hidden absolute top-4 left-1/2 -translate-x-1/2 font-mono text-xs bg-pf-panel/90 border border-pf-line rounded-md px-3 py-1.5 whitespace-nowrap"></div>
+    </main>
+
+    <aside id="panel" class="w-72 shrink-0 bg-pf-panel border-l border-pf-line overflow-y-auto"></aside>
+  </div>
+
+  <section id="timeline-wrap" class="h-[200px] shrink-0 border-t border-pf-line bg-pf-panel relative">
+    <canvas id="timeline" class="absolute inset-0 w-full h-full"></canvas>
+  </section>
+
+  <div id="modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-pf-panel border border-pf-line rounded-lg shadow-2xl">
+      <div id="modal-body" class="p-5"></div>
+      <div class="px-5 pb-5 flex justify-end">
+        <button id="modal-ok" class="pf-btn pf-btn-primary">Entendi</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="online-modal" class="hidden fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4">
+    <div class="w-full max-w-lg max-h-full flex flex-col bg-pf-panel border border-pf-line rounded-lg shadow-2xl">
+      <div class="flex items-center gap-3 px-5 py-4 border-b border-pf-line">
+        <h2 class="font-semibold">🌐 Fases online</h2>
+        <span id="online-status" class="text-xs text-pf-danger">Sem conexão com o servidor</span>
+        <button id="online-close" class="pf-btn ml-auto" title="Fechar (Esc)">✕</button>
+      </div>
+
+      <div class="px-5 py-4 border-b border-pf-line">
+        <h3 class="text-[10px] uppercase tracking-[0.18em] text-pf-muted mb-2 font-semibold">Publicar minha fase</h3>
+        <p id="online-level" class="text-xs text-pf-text/80 mb-3 truncate"></p>
+        <div class="flex gap-2">
+          <input id="online-author" class="pf-text flex-1" maxlength="24" placeholder="Seu nome">
+          <button id="online-publish" class="pf-btn pf-btn-primary">Publicar</button>
+        </div>
+        <p id="online-msg" class="text-xs mt-2"></p>
+        <p class="text-[11px] text-pf-muted mt-1">A fase é publicada sem a música.</p>
+      </div>
+
+      <div class="px-5 pt-4 pb-2 min-h-0 flex flex-col">
+        <h3 class="text-[10px] uppercase tracking-[0.18em] text-pf-muted mb-2 font-semibold">Publicadas por todos</h3>
+        <div id="online-list" class="space-y-2 overflow-y-auto max-h-[42vh] pr-1"></div>
+      </div>
+
+      <div class="px-5 py-3 border-t border-pf-line flex items-center gap-2">
+        <label class="text-[11px] text-pf-muted shrink-0">Servidor</label>
+        <input id="online-server" class="pf-text flex-1 text-[11px]" spellcheck="false">
+        <button id="online-connect" class="pf-btn">Conectar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="fixed top-14 right-4 z-50 flex flex-col items-end gap-2 pointer-events-none"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/musiccheck.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/hazards.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/panel.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/main.js"></script>
+  <script src="js/online.js"></script>
+</body>
+</html>

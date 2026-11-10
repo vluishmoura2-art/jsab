@@ -1,0 +1,6 @@
+# fases publicadas no servidor local (não versionar)
+data/
+node_modules/
+
+# configurações locais do Claude Code (permissões desta máquina)
+.claude/settings.local.json
