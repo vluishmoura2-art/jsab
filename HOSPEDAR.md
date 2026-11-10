@@ -20,6 +20,10 @@ Depois de hospedado, qualquer pessoa abre `https://seu-endereco` e já entra con
 | `DATA_DIR` | caminho do volume, ex. `/data` | onde fica `levels.json` |
 | `TRUST_PROXY` | `1` | usa o IP real do jogador (vem do proxy) no limite de publicações |
 | `ADMIN_TOKEN` | uma senha longa e aleatória | permite apagar fases (moderação) |
+| `MAX_MUSIC_MB` | padrão `10` | tamanho máximo da música de cada fase |
+| `MUSIC_TOTAL_MB` | padrão `1024` | espaço total para músicas; acima disso tira a música das fases mais antigas |
+
+O volume precisa ter espaço para as músicas (pelo menos o valor de `MUSIC_TOTAL_MB`).
 
 O `Dockerfile` já define `PORT=8080`, `DATA_DIR=/data` e `TRUST_PROXY=1`.
 Defina só o `ADMIN_TOKEN` no painel da hospedagem (nunca coloque ele no código).
@@ -65,11 +69,20 @@ Pegue o `id` da fase em `https://seu-endereco/api/levels` e rode:
 curl -X DELETE https://seu-endereco/api/levels/<id> -H "Authorization: Bearer <seu-token>"
 ```
 
-Ela some na hora da lista de todo mundo que está online.
+Ela some na hora da lista de todo mundo que está online, e a música dela é apagada do disco.
+
+## Músicas das fases (direitos autorais)
+
+Quem publica com música precisa marcar que a música é dela, é livre ou que tem permissão.
+O servidor repete a verificação simples de metadados (bloqueia copyright, ISRC, gravadora)
+e só aceita MP3, WAV, OGG, FLAC e M4A. **Essa verificação não reconhece a música pelo som**:
+uma faixa protegida sem metadados passa. Se alguém avisar que uma música é protegida,
+apague a fase com o comando acima. Num site público, deixe um contato visível para esses avisos.
 
 ## Limites já embutidos
 
 - Fase de até 300 KB e 2000 perigos; fases vazias são recusadas.
+- Música de até 10 MB por fase e 1 GB no total (ajustáveis pelas variáveis acima).
 - 5 publicações a cada 10 minutos por IP.
 - Até 20 conexões ao vivo por IP e 2000 no total.
 - Guarda as 500 fases mais recentes.
@@ -80,6 +93,6 @@ Ela some na hora da lista de todo mundo que está online.
 
 - Contas de usuário (qualquer um publica com qualquer nome).
 - Filtro automático de palavras ofensivas (a moderação é manual, pelo `ADMIN_TOKEN`).
-- Música nas fases online.
+- Reconhecimento de música pelo som (precisaria de um serviço externo, como AcoustID).
 - Mais de uma instância do servidor ao mesmo tempo (as fases ficam num arquivo local;
   para escalar seria preciso um banco de dados).

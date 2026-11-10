@@ -42,6 +42,12 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   `TRUST_PROXY=1` (IP = último item do X-Forwarded-For), `ADMIN_TOKEN` (DELETE /api/levels/:id,
   evento SSE `removed`). `/healthz` para health check. Limites: 5 publicações/10 min por IP,
   20 conexões ao vivo por IP, 2000 no total.
+  Música nas fases: POST `application/octet-stream` = `[uint32 BE tamanho do JSON][JSON][áudio]`,
+  JSON com `musicName` e `musicRights: true` (obrigatório). O servidor roda `musiccheck.js` de novo,
+  confere o formato pelos bytes e grava em `DATA_DIR/music/<id>.bin`; `GET /api/levels/:id/music`.
+  Env `MAX_MUSIC_MB` (padrão 10) e `MUSIC_TOTAL_MB` (padrão 1024; tira a música das fases mais antigas).
+  No cliente, `PF.audio.pushTemp()/popTemp()` toca a música da fase online sem perder a sua
+  (`PF.audio.raw` guarda os bytes originais para publicar).
 
 Arena lógica: 1280×720.
 
@@ -67,7 +73,8 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   (tempo p/ aparecer, tempo ativa, grossura). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
-  Fases online: publicar (sem música) e ver ao vivo as fases e quantas pessoas estão online.
+  Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;
+  quem joga a fase de outra pessoa ouve a música dela.
 
 Para testar no Browser pane use o servidor de `.claude/launch.json` (`node server.js`; o pane
 não carrega scripts locais via file://). O editor continua abrindo via `index.html` direto;

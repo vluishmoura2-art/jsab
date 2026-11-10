@@ -33,6 +33,9 @@ const MAX_LEVELS = 500;                 // guarda as 500 mais recentes
 const RATE = { max: 5, windowMs: 10 * 60 * 1000 }; // 5 publicações a cada 10 min por IP
 const MAX_SSE = 2000;                   // conexões ao vivo no total
 const MAX_SSE_PER_IP = 20;              // conexões ao vivo por IP (várias abas ok)
+const MUSIC_DIR = path.join(DATA_DIR, 'music');
+const MAX_MUSIC = (Number(process.env.MAX_MUSIC_MB) || 10) * 1024 * 1024;        // por fase
+const MUSIC_TOTAL = (Number(process.env.MUSIC_TOTAL_MB) || 1024) * 1024 * 1024;  // espaço total para músicas
 
 // IP de quem chamou. Atrás de proxy, o último item do X-Forwarded-For é o que o
 // proxy da hospedagem adicionou (os anteriores podem ser inventados pelo cliente).
@@ -48,10 +51,10 @@ function clientIp(req) {
 }
 
 // ---------- validação: usa o mesmo código do editor ----------
-const sandbox = { console };
+const sandbox = { console, TextDecoder };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/config.js', 'js/hazards.js', 'js/storage.js']) {
+for (const f of ['js/config.js', 'js/hazards.js', 'js/storage.js', 'js/musiccheck.js']) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox, { filename: f });
 }
 const PF = sandbox.PF;
@@ -73,7 +76,38 @@ function persist() {
 const meta = l => ({
   id: l.id, name: l.name, author: l.author, createdAt: l.createdAt,
   duration: l.level.duration, hazards: l.level.hazards.length,
+  hasMusic: !!l.music, musicName: l.music ? l.music.name : '',
 });
+
+// ---------- músicas das fases (arquivos em data/music) ----------
+const musicPath = id => path.join(MUSIC_DIR, id + '.bin');
+
+function dropMusic(entry) {
+  if (!entry || !entry.music) return;
+  try { fs.unlinkSync(musicPath(entry.id)); } catch (e) { /* já não existe */ }
+  entry.music = null;
+}
+
+// mantém no máximo MAX_LEVELS fases e MUSIC_TOTAL de músicas (tira das mais antigas)
+function enforceLimits() {
+  while (levels.length > MAX_LEVELS) dropMusic(levels.pop());
+  let total = levels.reduce((s, l) => s + (l.music ? l.music.size : 0), 0);
+  for (let i = levels.length - 1; i >= 0 && total > MUSIC_TOTAL; i--) {
+    if (levels[i].music) { total -= levels[i].music.size; dropMusic(levels[i]); }
+  }
+}
+
+// confere pelos primeiros bytes que é mesmo um áudio suportado
+function sniffAudio(b) {
+  const s = (i, n) => b.toString('latin1', i, i + n);
+  if (b.length < 12) return null;
+  if (s(0, 3) === 'ID3' || (b[0] === 0xFF && (b[1] & 0xE0) === 0xE0)) return 'audio/mpeg';
+  if (s(0, 4) === 'RIFF' && s(8, 4) === 'WAVE') return 'audio/wav';
+  if (s(0, 4) === 'OggS') return 'audio/ogg';
+  if (s(0, 4) === 'fLaC') return 'audio/flac';
+  if (s(4, 4) === 'ftyp') return 'audio/mp4';
+  return null;
+}
 
 const cleanText = (s, max, fallback) => {
   s = String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -111,23 +145,38 @@ function isAdmin(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-function readBody(req) {
+function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0, failed = false;
     req.on('data', c => {
       if (failed) return;
       size += c.length;
-      if (size > MAX_BODY) {
+      if (size > limit) {
         failed = true;
         const e = new Error('too big');
         e.code = 413;
         reject(e);
       } else chunks.push(c);
     });
-    req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks).toString('utf8')); });
+    req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks)); });
     req.on('error', reject);
   });
+}
+
+// Corpo da publicação:
+//  - application/json: { author, level }
+//  - application/octet-stream (com música): [4 bytes tamanho do JSON][JSON][bytes do áudio]
+//    JSON = { author, level, musicName, musicRights: true }
+async function readPublish(req) {
+  const binary = String(req.headers['content-type'] || '').startsWith('application/octet-stream');
+  const buf = await readBody(req, binary ? MAX_BODY + MAX_MUSIC + 4 : MAX_BODY);
+  if (!binary) return { body: JSON.parse(buf.toString('utf8')), audio: null };
+  if (buf.length < 4) throw new SyntaxError('curto');
+  const jlen = buf.readUInt32BE(0);
+  if (jlen > MAX_BODY || 4 + jlen > buf.length) throw new SyntaxError('tamanho');
+  const audio = buf.subarray(4 + jlen);
+  return { body: JSON.parse(buf.subarray(4, 4 + jlen).toString('utf8')), audio: audio.length ? audio : null };
 }
 
 // ---------- API ----------
@@ -139,9 +188,11 @@ async function publish(req, res) {
   const hits = (rate.get(ip) || []).filter(t => now - t < RATE.windowMs);
   if (hits.length >= RATE.max) return json(res, 429, { error: 'Muitas publicações seguidas. Espere alguns minutos.' });
 
-  let body;
-  try { body = JSON.parse(await readBody(req)); } catch (e) {
-    return e.code === 413 ? json(res, 413, { error: 'Fase grande demais.' }) : json(res, 400, { error: 'JSON inválido.' });
+  let body, audio;
+  try { ({ body, audio } = await readPublish(req)); } catch (e) {
+    return e.code === 413
+      ? json(res, 413, { error: `Fase ou música grande demais (música até ${Math.round(MAX_MUSIC / 1048576)} MB).` })
+      : json(res, 400, { error: 'JSON inválido.' });
   }
   const raw = body && body.level;
   if (!raw || raw.format !== 'pulsefield-level' || !Array.isArray(raw.hazards)) {
@@ -153,21 +204,39 @@ async function publish(req, res) {
   if (!level.hazards.length) return json(res, 400, { error: 'A fase está vazia: coloque pelo menos um perigo.' });
   level.name = cleanText(level.name, 40, 'Sem nome');
 
+  // música (opcional): mesma verificação de direitos autorais do editor, feita de novo aqui
+  let music = null;
+  if (audio) {
+    if (body.musicRights !== true) return json(res, 400, { error: 'Confirme que você pode compartilhar essa música.' });
+    if (audio.length > MAX_MUSIC) return json(res, 413, { error: `Música grande demais (máx. ${Math.round(MAX_MUSIC / 1048576)} MB).` });
+    const type = sniffAudio(audio);
+    if (!type) return json(res, 400, { error: 'Formato de música não suportado (use MP3, WAV, OGG, FLAC ou M4A).' });
+    const name = cleanText(body.musicName, 80, 'música');
+    const check = PF.musicCheck(new Uint8Array(audio.buffer, audio.byteOffset, audio.length), name);
+    if (!check.allowed) return json(res, 400, { error: 'Música bloqueada: ' + check.reasons.join(' / ') });
+    music = { name, type, size: audio.length };
+  }
+
   const entry = {
     id: crypto.randomBytes(6).toString('hex'),
     name: level.name,
     author: cleanText(body.author, 24, 'Anônimo'),
     createdAt: new Date().toISOString(),
     level,
+    music,
   };
+  if (music) {
+    fs.mkdirSync(MUSIC_DIR, { recursive: true });
+    fs.writeFileSync(musicPath(entry.id), audio);
+  }
   levels.unshift(entry);
-  if (levels.length > MAX_LEVELS) levels.length = MAX_LEVELS;
+  enforceLimits();
   persist();
   hits.push(now);
   rate.set(ip, hits);
 
   broadcast('level', meta(entry));
-  console.log(`[publicada] "${entry.name}" por ${entry.author}`);
+  console.log(`[publicada] "${entry.name}" por ${entry.author}${music ? ` · música "${music.name}" (${(music.size / 1048576).toFixed(1)} MB)` : ''}`);
   json(res, 201, meta(entry));
 }
 
@@ -201,6 +270,24 @@ async function api(req, res, p) {
   if (p === '/api/levels' && req.method === 'GET') return json(res, 200, levels.map(meta));
   if (p === '/api/levels' && req.method === 'POST') return publish(req, res);
 
+  const mm = p.match(/^\/api\/levels\/([a-f0-9]{12})\/music$/);
+  if (mm && req.method === 'GET') {
+    const l = levels.find(x => x.id === mm[1]);
+    if (!l || !l.music) return json(res, 404, { error: 'Esta fase não tem música.' });
+    const stream = fs.createReadStream(musicPath(l.id));
+    stream.on('error', () => { if (!res.headersSent) json(res, 404, { error: 'Música não encontrada.' }); else res.destroy(); });
+    stream.on('open', () => {
+      res.writeHead(200, {
+        'Content-Type': l.music.type,
+        'Content-Length': l.music.size,
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'public, max-age=86400', // o id nunca muda de conteúdo
+      });
+      stream.pipe(res);
+    });
+    return;
+  }
+
   const m = p.match(/^\/api\/levels\/([a-f0-9]{12})$/);
   if (m && req.method === 'GET') {
     const l = levels.find(x => x.id === m[1]);
@@ -211,6 +298,7 @@ async function api(req, res, p) {
     const i = levels.findIndex(x => x.id === m[1]);
     if (i < 0) return json(res, 404, { error: 'Fase não encontrada.' });
     const [gone] = levels.splice(i, 1);
+    dropMusic(gone);
     persist();
     broadcast('removed', { id: gone.id });
     console.log(`[removida] "${gone.name}" por ${gone.author}`);

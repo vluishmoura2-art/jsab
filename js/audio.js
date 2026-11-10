@@ -58,6 +58,9 @@
       if (A.ctx.state === 'suspended') A.ctx.resume();
     },
 
+    raw: null,   // bytes originais do arquivo (para publicar junto com a fase)
+    saved: null, // sua música guardada enquanto toca a música de uma fase online
+
     async load(arrayBuffer, name, check) {
       A.ensureCtx();
       const buf = await A.ctx.decodeAudioData(arrayBuffer.slice(0));
@@ -67,6 +70,27 @@
       A.peaks = computePeaks(buf);
       A.name = name;
       A.check = check;
+      A.raw = arrayBuffer;
+    },
+
+    // Toca temporariamente a música de outra fase sem perder a sua.
+    async pushTemp(arrayBuffer, name) {
+      A.ensureCtx();
+      const buf = await A.ctx.decodeAudioData(arrayBuffer.slice(0));
+      A.stop();
+      if (!A.saved) A.saved = { buffer: A.buffer, peaks: A.peaks, duration: A.duration, name: A.name, check: A.check, raw: A.raw };
+      A.buffer = buf;
+      A.duration = buf.duration;
+      A.peaks = computePeaks(buf);
+      A.name = name;
+      A.check = null;
+      A.raw = null;
+    },
+    popTemp() {
+      if (!A.saved) return;
+      A.stop();
+      Object.assign(A, A.saved);
+      A.saved = null;
     },
 
     play(t) {
@@ -104,7 +128,7 @@
 
     clear() {
       A.stop();
-      A.buffer = null; A.peaks = null; A.duration = 0; A.name = ''; A.check = null;
+      A.buffer = null; A.peaks = null; A.duration = 0; A.name = ''; A.check = null; A.raw = null;
       idbRun('readwrite', s => s.delete(KEY)).catch(() => {});
     },
 

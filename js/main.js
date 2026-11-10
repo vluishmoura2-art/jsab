@@ -316,7 +316,8 @@
   const P = PF.PLAYER;
 
   // override: fase de outra pessoa (online) jogada sem substituir a fase do editor.
-  function startTest(t0 = app.t, override = null, label = '') {
+  // withMusic: a fase online trouxe música própria (já carregada com PF.audio.pushTemp)
+  function startTest(t0 = app.t, override = null, label = '', withMusic = false) {
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     pause();
     if (override) {
@@ -328,6 +329,7 @@
     const sp = app.level.spawn;
     app.test = {
       t0, hits: 0, shake: 0, flash: 0, done: false, over: false, online: app.editLevel ? label : '',
+      music: app.editLevel ? withMusic : true,
       player: {
         x: sp.x, y: sp.y, hp: P.hp, dash: 0, dashCd: 0, hurt: 0, spawn: 0.6,
         dir: [1, 0], dashDir: [1, 0], trail: [], ang: 0, targetAng: 0, stretch: 0,
@@ -337,7 +339,7 @@
     hud.classList.remove('hidden');
     testBtn.textContent = '■ Sair do teste';
     stage.style.cursor = 'none';
-    if (!app.editLevel) PF.audio.play(t0); // fases online vêm sem música
+    if (app.test.music) PF.audio.play(t0); // fase online sem música fica em silêncio
   }
 
   function stopTest() {
@@ -351,7 +353,9 @@
       app.editLevel = null;
       PF.hz.syncIds(app.level.hazards);
       app.setTime(app.t);
+      PF.audio.popTemp(); // volta a sua música
       PF.panel.rebuild();
+      updateMusicUI();
     }
     keys.clear();
     hud.classList.add('hidden');
@@ -481,6 +485,7 @@
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
+    if (app.editLevel) { PF.toast('Saia da fase online (Esc) antes de trocar a música.', 'error'); return; }
     let data;
     try { data = await f.arrayBuffer(); } catch (err) { alert('Não consegui ler o arquivo.'); return; }
     const res = PF.musicCheck(new Uint8Array(data), f.name);
@@ -500,22 +505,49 @@
     app.commit();
     updateMusicUI();
   });
-  musicClear.addEventListener('click', () => { pause(); PF.audio.clear(); updateMusicUI(); });
+  musicClear.addEventListener('click', () => {
+    if (app.editLevel) return; // tocando a música de uma fase online
+    pause(); PF.audio.clear(); updateMusicUI();
+  });
 
   // ---------- fases de outras pessoas (usado por online.js) ----------
-  app.playLevel = (raw, label) => {
+  // music: { data: ArrayBuffer, name } quando a fase online tem música
+  app.playLevel = async (raw, label, music) => {
     if (app.mode === 'test') stopTest();
-    startTest(0, PF.storage.normalize(raw), label);
+    let withMusic = false;
+    if (music) {
+      try {
+        await PF.audio.pushTemp(music.data, music.name);
+        withMusic = true;
+      } catch (err) {
+        PF.toast('Não consegui tocar a música desta fase; ela vai sem som.', 'error');
+      }
+    }
+    startTest(0, PF.storage.normalize(raw), label, withMusic);
+    updateMusicUI();
   };
-  app.openLevel = raw => {
+  app.openLevel = async (raw, music) => {
     if (app.mode === 'test') stopTest();
     pause();
     app.level = PF.storage.normalize(raw);
     app.selectedId = null;
     app.t = 0;
     PF.timeline.scroll = 0;
+    if (music) {
+      // passa pela mesma verificação de quando você importa uma música
+      const res = PF.musicCheck(new Uint8Array(music.data), music.name);
+      if (res.allowed) {
+        try {
+          await PF.audio.load(music.data, music.name, res);
+          PF.audio.persist(music.data);
+        } catch (err) {
+          PF.toast('A música desta fase não pôde ser carregada.', 'error');
+        }
+      }
+    }
     PF.panel.rebuild();
     app.commit();
+    updateMusicUI();
   };
 
   // ---------- teclado ----------
@@ -531,7 +563,7 @@
     }
     if (app.mode === 'test') {
       if (k === 'escape' || k === 't') { stopTest(); e.preventDefault(); return; }
-      if (k === 'r') { startTest(app.test.t0, app.editLevel ? app.level : null, app.test.online); e.preventDefault(); return; }
+      if (k === 'r') { startTest(app.test.t0, app.editLevel ? app.level : null, app.test.online, app.test.music); e.preventDefault(); return; }
       if (!e.repeat && (k === ' ' || k === 'shift')) dash();
       keys.add(k);
       if (k === ' ' || k.startsWith('arrow')) e.preventDefault();

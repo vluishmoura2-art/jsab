@@ -66,12 +66,37 @@
     if (!r.ok) throw new Error(d.error || 'Erro ' + r.status);
     return d;
   }
-  O.publish = (level, author) => req('/api/levels', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ author, level }),
-  });
+  const MAX_MUSIC = 10 * 1024 * 1024; // mesmo limite padrão do servidor
+
+  // music: { data: ArrayBuffer, name } (opcional). Com música o corpo é binário:
+  // [4 bytes tamanho do JSON][JSON][bytes do áudio] — evita inflar o áudio em base64.
+  O.publish = (level, author, music) => {
+    if (!music) {
+      return req('/api/levels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, level }),
+      });
+    }
+    const head = new TextEncoder().encode(JSON.stringify({ author, level, musicName: music.name, musicRights: true }));
+    const buf = new Uint8Array(4 + head.length + music.data.byteLength);
+    new DataView(buf.buffer).setUint32(0, head.length);
+    buf.set(head, 4);
+    buf.set(new Uint8Array(music.data), 4 + head.length);
+    return req('/api/levels', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: buf });
+  };
   O.fetchLevel = id => req('/api/levels/' + encodeURIComponent(id));
+  O.fetchMusic = async id => {
+    const r = await fetch(O.base + '/api/levels/' + encodeURIComponent(id) + '/music');
+    if (!r.ok) throw new Error('Erro ' + r.status);
+    return r.arrayBuffer();
+  };
+
+  // sua música atual (mesmo enquanto toca a de uma fase online)
+  function myMusic() {
+    const src = PF.audio.saved || PF.audio;
+    return src.raw ? { data: src.raw, name: src.name } : null;
+  }
 
   // ---------- avisos ----------
   PF.toast = function (msg, kind = 'info') {
@@ -123,6 +148,32 @@
     const lvl = myLevel();
     $('online-level').textContent = `“${lvl.name || 'Sem nome'}” · ${lvl.hazards.length} perigo(s) · ${PF.u.fmtTime(lvl.duration)}`;
     $('online-msg').textContent = '';
+
+    // opções da música
+    const box = $('online-music');
+    box.innerHTML = '';
+    const mu = myMusic();
+    if (!mu) {
+      box.appendChild(el('p', 'text-[11px] text-pf-muted', 'Sem música carregada: a fase vai sem som.'));
+      return;
+    }
+    const mb = mu.data.byteLength / 1048576;
+    const check = (id, label, checked, disabled) => {
+      const row = el('label', 'flex items-start gap-2 text-xs text-pf-text/90 cursor-pointer');
+      const cb = el('input', 'mt-0.5 accent-[#7CFFB2]');
+      Object.assign(cb, { type: 'checkbox', id, checked, disabled });
+      row.append(cb, el('span', 'leading-snug', label));
+      box.appendChild(row);
+      return cb;
+    };
+    if (mu.data.byteLength > MAX_MUSIC) {
+      box.appendChild(el('p', 'text-[11px] text-pf-danger',
+        `A música “${mu.name}” tem ${mb.toFixed(1)} MB; o limite é ${MAX_MUSIC / 1048576} MB. A fase vai sem som.`));
+      return;
+    }
+    const withMusic = check('online-with-music', `Incluir a música “${mu.name}” (${mb.toFixed(1)} MB)`, true, false);
+    const rights = check('online-rights', 'Confirmo que essa música é minha, é livre (domínio público / Creative Commons) ou tenho permissão para compartilhar.', false, false);
+    withMusic.addEventListener('change', () => { rights.disabled = !withMusic.checked; });
   }
 
   function renderList() {
@@ -141,6 +192,11 @@
       info.appendChild(el('p', 'text-sm font-semibold truncate', m.name));
       info.appendChild(el('p', 'text-[11px] text-pf-muted truncate',
         `por ${m.author} · ${PF.u.fmtTime(m.duration)} · ${m.hazards} perigo(s) · ${ago(m.createdAt)}`));
+      if (m.hasMusic) {
+        const mu = el('p', 'text-[11px] text-pf-accent truncate', '♪ ' + m.musicName);
+        mu.title = m.musicName;
+        info.appendChild(mu);
+      }
       row.appendChild(info);
       const play = el('button', 'pf-btn pf-btn-primary', '▶ Jogar');
       play.addEventListener('click', () => load(m, 'play', play));
@@ -155,13 +211,21 @@
   async function load(m, how, btn) {
     btn.disabled = true;
     try {
+      if (how === 'open' && !confirm(
+        `Abrir “${m.name}” no editor? Sua fase atual será substituída (Ctrl+Z desfaz)` +
+        (m.hasMusic ? ' e a música dela vai substituir a sua.' : '.'))) return;
       const d = await O.fetchLevel(m.id);
+      let music = null;
+      if (d.hasMusic) {
+        PF.toast('Baixando a música da fase…');
+        try { music = { data: await O.fetchMusic(m.id), name: d.musicName }; }
+        catch (err) { PF.toast('Não consegui baixar a música; a fase vai sem som.', 'error'); }
+      }
       if (how === 'open') {
-        if (!confirm(`Abrir “${m.name}” no editor? Sua fase atual será substituída (Ctrl+Z desfaz).`)) return;
-        PF.app.openLevel(d.level);
+        await PF.app.openLevel(d.level, music);
         PF.toast(`“${m.name}” aberta no editor`);
       } else {
-        PF.app.playLevel(d.level, `${m.name} — ${m.author}`);
+        await PF.app.playLevel(d.level, `${m.name} — ${m.author}`, music);
       }
       O.close();
     } catch (err) {
@@ -184,10 +248,18 @@
     btn.disabled = true;
     msg.className = 'text-xs mt-2 text-pf-muted';
     msg.textContent = 'Publicando…';
+    const music = $('online-with-music') && $('online-with-music').checked ? myMusic() : null;
+    if (music && !$('online-rights').checked) {
+      msg.className = 'text-xs mt-2 text-pf-danger';
+      msg.textContent = 'Confirme que você pode compartilhar essa música (ou desmarque “Incluir a música”).';
+      btn.disabled = false;
+      return;
+    }
+    if (music) msg.textContent = 'Publicando com a música…';
     try {
-      const m = await O.publish(myLevel(), author);
+      const m = await O.publish(myLevel(), author, music);
       msg.className = 'text-xs mt-2 text-pf-accent';
-      msg.textContent = `Publicada! Todos online já veem “${m.name}”.`;
+      msg.textContent = `Publicada${m.hasMusic ? ' com música' : ''}! Todos online já veem “${m.name}”.`;
     } catch (err) {
       msg.className = 'text-xs mt-2 text-pf-danger';
       msg.textContent = err instanceof TypeError ? 'Sem conexão com o servidor.' : err.message;
