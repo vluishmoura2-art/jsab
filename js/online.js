@@ -12,6 +12,55 @@
 
   const defaultBase = () => (/^https?:$/.test(location.protocol) ? location.origin : 'http://localhost:5173');
 
+  // ---------- cópia local das fases publicadas (localStorage) ----------
+  // Guarda a lista e o JSON de cada fase de todos, por servidor, para ver e jogar sem conexão.
+  // A música não entra (localStorage tem só alguns MB); offline a fase toca sem som.
+  const KEY_CACHE = 'pulsefield.publishedCache', CACHE_MAX = 300;
+  const cache = (() => {
+    try { const c = JSON.parse(ls.get(KEY_CACHE)); if (c && typeof c === 'object') return c; } catch (e) { /* vazio */ }
+    return {};
+  })();
+  const bucket = () => (cache[O.base] = cache[O.base] || { list: [], levels: {} });
+  function saveCache() {
+    const b = bucket();
+    b.list = b.list.slice(0, CACHE_MAX);
+    const keep = new Set(b.list.map(m => m.id));
+    for (const id of Object.keys(b.levels)) if (!keep.has(id)) delete b.levels[id];
+    // sem espaço: descarta o JSON das fases mais antigas até caber
+    for (;;) {
+      try { localStorage.setItem(KEY_CACHE, JSON.stringify(cache)); return; } catch (e) {
+        const old = [...b.list].reverse().find(m => b.levels[m.id]);
+        if (!old) return;
+        delete b.levels[old.id];
+      }
+    }
+  }
+  function cacheList(list) { bucket().list = list.slice(); saveCache(); }
+  function cachedLevel(id) { return bucket().levels[id] || null; }
+  O.cachedCount = () => Object.keys(bucket().levels).length;
+
+  // baixa em segundo plano o JSON das fases que ainda não estão guardadas
+  let prefetching = false;
+  async function prefetch() {
+    if (prefetching) return;
+    prefetching = true;
+    try {
+      for (const m of bucket().list.slice(0, CACHE_MAX)) {
+        if (!O.connected) break;
+        if (cachedLevel(m.id)) continue;
+        try {
+          const d = await O.fetchLevel(m.id);
+          if (d && d.level && bucket().list.some(x => x.id === m.id)) { bucket().levels[m.id] = d.level; saveCache(); }
+        } catch (e) { /* tenta na próxima conexão */ }
+      }
+    } finally { prefetching = false; }
+    renderList();
+  }
+
+  function useCachedList() {
+    if (!O.connected) { O.levels = bucket().list.slice(); renderList(); }
+  }
+
   // ---------- conexão ----------
   O.connect = function () {
     clearTimeout(O.retry);
@@ -19,6 +68,7 @@
     O.connected = false;
     O.online = 0;
     renderStatus();
+    useCachedList(); // mostra as fases guardadas enquanto conecta
     let es;
     try { es = new EventSource(O.base + '/api/events'); } catch (e) { return; }
     O.es = es;
@@ -27,27 +77,32 @@
       O.connected = true;
       O.online = d.online;
       O.levels = d.levels || [];
+      cacheList(O.levels);
       renderStatus();
       renderList();
+      prefetch();
     });
     es.addEventListener('online', e => { O.online = JSON.parse(e.data).online; renderStatus(); });
     es.addEventListener('level', e => {
       const m = JSON.parse(e.data);
       O.levels = [m, ...O.levels.filter(l => l.id !== m.id)];
+      cacheList(O.levels);
       renderList();
+      prefetch();
       PF.toast(`Nova fase online: “${m.name}” por ${m.author}`);
     });
     es.addEventListener('removed', e => {
       const { id } = JSON.parse(e.data);
       O.levels = O.levels.filter(l => l.id !== id);
+      cacheList(O.levels);
       renderList();
     });
     es.onerror = () => {
-      if (O.connected) { O.connected = false; renderStatus(); return; } // o navegador reconecta sozinho
+      if (O.connected) { O.connected = false; renderStatus(); renderList(); return; } // o navegador reconecta sozinho
       // nunca conectou: para e tenta de novo mais tarde, sem encher o console
       es.close();
       renderStatus();
-      renderList();
+      useCachedList();
       O.retry = setTimeout(O.connect, 15000);
     };
   };
@@ -186,7 +241,12 @@
       box.appendChild(el('p', 'text-xs text-pf-muted py-6 text-center leading-relaxed', msg));
       return;
     }
+    if (!O.connected) {
+      box.appendChild(el('p', 'text-[11px] text-pf-muted pb-1',
+        `Sem conexão · mostrando as fases guardadas neste navegador (${O.cachedCount()} jogáveis, sem música).`));
+    }
     for (const m of O.levels) {
+      const saved = !!cachedLevel(m.id);
       const row = el('div', 'flex items-center gap-3 px-3 py-2.5 rounded-md bg-pf-bg/60 border border-pf-line');
       const info = el('div', 'min-w-0 flex-1');
       info.appendChild(el('p', 'text-sm font-semibold truncate', m.name));
@@ -197,12 +257,18 @@
         mu.title = m.musicName;
         info.appendChild(mu);
       }
+      if (saved) {
+        const tag = el('span', 'text-[10px] text-pf-muted font-mono', '● salva');
+        tag.title = 'Guardada neste navegador: dá para jogar mesmo sem conexão (sem a música)';
+        info.firstChild.append(' ', tag);
+      }
       row.appendChild(info);
       const play = el('button', 'pf-btn pf-btn-primary', '▶ Jogar');
       play.addEventListener('click', () => load(m, 'play', play));
       const open = el('button', 'pf-btn', 'Abrir');
       open.title = 'Abrir no editor (substitui a fase atual; Ctrl+Z desfaz)';
       open.addEventListener('click', () => load(m, 'open', open));
+      if (!O.connected && !saved) play.disabled = open.disabled = true;
       row.append(play, open);
       box.appendChild(row);
     }
@@ -214,7 +280,19 @@
       if (how === 'open' && !confirm(
         `Abrir “${m.name}” no editor? Sua fase atual será substituída (Ctrl+Z desfaz)` +
         (m.hasMusic ? ' e a música dela vai substituir a sua.' : '.'))) return;
-      const d = await O.fetchLevel(m.id);
+      let d = null;
+      if (O.connected) {
+        try {
+          d = await O.fetchLevel(m.id);
+          if (d && d.level) { bucket().levels[m.id] = d.level; saveCache(); }
+        } catch (err) { if (!cachedLevel(m.id)) throw err; }
+      }
+      if (!d) {
+        const lvl = cachedLevel(m.id);
+        if (!lvl) throw new Error('fase não guardada neste navegador e sem conexão');
+        d = { level: lvl, hasMusic: false };
+        if (m.hasMusic) PF.toast('Jogando a cópia guardada, sem a música (sem conexão).');
+      }
       let music = null;
       if (d.hasMusic) {
         PF.toast('Baixando a música da fase…');

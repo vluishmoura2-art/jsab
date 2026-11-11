@@ -33,7 +33,9 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   início em `level.spawn`, losango gira para a direção do movimento), loop.
   `app.playLevel()` joga uma fase online sem tocar na fase do editor (`app.editLevel` guarda a
   sua; `commit()` não salva enquanto isso).
-- `js/online.js` — fases online (`PF.online`): publicar, lista ao vivo (SSE), jogar/abrir, avisos (`PF.toast`)
+- `js/online.js` — fases online (`PF.online`): publicar, lista ao vivo (SSE), jogar/abrir, avisos (`PF.toast`).
+  Cópia local das fases de todos em `localStorage['pulsefield.publishedCache']` (por servidor:
+  lista + JSON de cada fase, até 300, sem música): baixada em segundo plano, usada sem conexão.
 - `server.js` — servidor Node **sem dependências**: serve só `index.html`, `css/`, `js/`; API
   `/api/levels` (GET/POST), `/api/levels/:id`, `/api/events` (SSE). Valida as fases rodando
   `config.js`/`hazards.js`/`storage.js` num `vm` (mesma normalização do editor). Grava em
