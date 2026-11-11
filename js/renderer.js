@@ -40,6 +40,7 @@
       ctx.lineWidth = Math.max(0.5, s.w);
       ctx.stroke();
     } else if (s.kind === 'rect') {
+      if (s.rot) { ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.translate(-s.x, -s.y); }
       if (s.head) { ctx.fillStyle = '#FFD3DA'; ctx.shadowColor = '#FFD3DA'; ctx.shadowBlur = 22; } // cabeça, quase branca
       ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       if (s.flash > 0) { // brilho ao nascer
@@ -140,12 +141,26 @@
         ctx.moveTo(x0, h.y); ctx.lineTo(x1, h.y);
         ctx.moveTo(x1 - d * 8, h.y - 6); ctx.lineTo(x1, h.y); ctx.lineTo(x1 - d * 8, h.y + 6);
         ctx.stroke();
+      } else if (h.type === 'thunder') {
+        // faixa da nuvem e setas no sentido da queda
+        const top = !h.side, band = 34, y0 = top ? 0 : H - band;
+        ctx.strokeRect(0, y0, W, band);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        const d = top ? 1 : -1, ya = top ? band + 8 : H - band - 8;
+        for (let x = 160; x < W; x += 320) {
+          ctx.moveTo(x, ya); ctx.lineTo(x, ya + d * 34);
+          ctx.moveTo(x - 6, ya + d * 26); ctx.lineTo(x, ya + d * 34); ctx.lineTo(x + 6, ya + d * 26);
+        }
+        ctx.stroke();
       }
 
-      // alça central
+      // alça (no Trovão fica na nuvem, onde dá para clicar)
       ctx.setLineDash([]);
       const hs = (sel ? 5 : 3.5) / scale;
-      ctx.fillRect(h.x - hs, h.y - hs, hs * 2, hs * 2);
+      const hx = h.type === 'thunder' ? u.clamp(h.x, 20, W - 20) : h.x;
+      const hy = h.type === 'thunder' ? (h.side ? H - 17 : 17) : h.y;
+      ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
       ctx.restore();
     }
   }

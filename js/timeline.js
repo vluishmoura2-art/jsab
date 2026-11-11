@@ -1,9 +1,9 @@
 // Timeline em canvas: régua, uma faixa por tipo de perigo, playhead, arrastar e zoom.
 (function () {
   const { C, u } = PF;
-  const GUT = 100, RULER = 24, MUS = 30, LANE = 34;
+  const GUT = 100, RULER = 24, MUS = 30, LANE = 28;
   const TOP = RULER + MUS; // início das faixas de perigos
-  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake'];
+  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake', 'thunder'];
   const FONT_MONO = '10px "JetBrains Mono", monospace';
   const FONT_UI = '11px "Space Grotesk", system-ui, sans-serif';
 
@@ -135,7 +135,7 @@
       const [xa, xb] = blockRange(hz);
       if (xb < GUT || xa > w) continue;
       const def = PF.HAZARDS[hz.type];
-      const y = TOP + lane * LANE + 6, bh = LANE - 12;
+      const y = TOP + lane * LANE + 4, bh = LANE - 8;
       const xs = tx(hz.time), xw = tx(hz.time + def.warnLen(hz));
       const sel = hz.id === app.selectedId;
 

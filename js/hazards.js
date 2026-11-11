@@ -206,7 +206,105 @@
       },
       hit: (h, x, y, tol) => Math.abs(x - h.x) <= Math.max(h.width / 2, tol) && Math.abs(y - h.y) <= Math.max(h.height / 2, tol),
     },
+
+    thunder: {
+      label: 'Trovão',
+      desc: 'Uma nuvem presa na borda de cima ou de baixo que fica soltando partículas durante toda a duração. De tempos em tempos cai um quadrado maior girando; quando ele bate na outra borda, abre um círculo oco. Para durar a fase inteira, use uma duração grande.',
+      defaults: { side: 0, warn: 0.8, duration: 8, rate: 16, partSize: 6, speed: 260, every: 1.2, sqSize: 22, ringR: 110, ringW: 14 },
+      props: [
+        { key: 'side', label: 'Lado da nuvem', type: 'select', options: [[0, 'Em cima ↓'], [1, 'Embaixo ↑']] },
+        { key: 'warn', label: 'Tempo para aparecer', min: 0, max: 5, step: 0.05, unit: 's' },
+        { key: 'duration', label: 'Duração', min: 0.5, max: 600, step: 0.5, unit: 's' },
+        { key: 'rate', label: 'Partículas por segundo', min: 0, max: 80, step: 1 },
+        { key: 'partSize', label: 'Tamanho das partículas', min: 2, max: 30, step: 1, unit: 'px' },
+        { key: 'speed', label: 'Velocidade de queda', min: 40, max: 1200, step: 10, unit: 'px/s' },
+        { key: 'every', label: 'Quadrado a cada (0 = nunca)', min: 0, max: 20, step: 0.1, unit: 's' },
+        { key: 'sqSize', label: 'Tamanho do quadrado', min: 6, max: 120, step: 1, unit: 'px' },
+        { key: 'ringR', label: 'Raio do círculo oco', min: 20, max: 600, step: 5, unit: 'px' },
+        { key: 'ringW', label: 'Grossura do círculo oco', min: 2, max: 80, step: 1, unit: 'px' },
+      ],
+      // o lado vem de onde você clicou: metade de cima -> nuvem em cima
+      init(h) { h.side = h.y < H / 2 ? 0 : 1; h.y = h.side ? H - CLOUD_Y : CLOUD_Y; },
+      lead: () => 0,
+      warnLen: h => h.warn,
+      length: h => h.warn + h.duration + Math.max(CLOUD_OUT, thunderFall(h) + RING_T),
+      shapes(h, lt, out) {
+        if (lt < 0) return;
+        const end = h.warn + h.duration;
+        const down = h.side ? -1 : 1;                 // sentido da queda
+        const edgeY = h.side ? H : 0, floorY = h.side ? 0 : H;
+        const seed = h.x * 0.137 + h.time * 3.1;
+
+        // partículas (do mais velho para o mais novo)
+        const life = (H + 40) / (h.speed * 0.75);
+        if (h.rate > 0) {
+          const i0 = Math.max(0, Math.ceil((lt - h.warn - life) * h.rate));
+          const i1 = Math.floor((Math.min(lt, end) - h.warn) * h.rate);
+          for (let i = i0; i <= i1; i++) {
+            const age = lt - h.warn - i / h.rate;
+            if (age < 0) continue;
+            const sp = h.speed * (0.75 + 0.5 * rnd(i, seed + 1));
+            const x = rnd(i, seed) * W + Math.sin(age * 3 + i) * 6;
+            const y = edgeY + down * (CLOUD_Y + sp * age);
+            if (off(x, y, h.partSize)) continue;
+            out.push({ kind: 'circle', x, y, r: h.partSize, state: 'active', alpha: 1 });
+          }
+        }
+
+        // quadrados maiores: caem girando e abrem um círculo oco no chão
+        if (h.every > 0) {
+          const fall = thunderFall(h), sSpeed = h.speed * 0.9;
+          const j0 = Math.max(1, Math.ceil((lt - h.warn - fall - RING_T) / h.every));
+          const j1 = Math.floor((Math.min(lt, end) - h.warn) / h.every);
+          for (let j = j0; j <= j1; j++) {
+            const age = lt - h.warn - j * h.every;
+            if (age < 0) continue;
+            const x = 60 + rnd(j, seed + 7) * (W - 120);
+            if (age < fall) {
+              const y = edgeY + down * (CLOUD_Y + sSpeed * age);
+              const pop = age < 0.12 ? 1.35 - 0.35 * age / 0.12 : 1;
+              const sz = h.sqSize * pop;
+              out.push({ kind: 'rect', x, y, w: sz, h: sz, rot: age * 5 * (rnd(j, seed + 3) < 0.5 ? -1 : 1), state: 'active', alpha: 1, flash: age < 0.12 ? 1 - age / 0.12 : 0 });
+            } else {
+              const ra = age - fall; // anel: cresce, fica, some
+              if (ra < 0.08) out.push({ kind: 'circle', x, y: floorY, r: h.sqSize * (1 + ra * 12), state: 'fx', alpha: 1 - ra / 0.08 });
+              if (ra < 0.35) {
+                const e = 1 - Math.pow(1 - ra / 0.35, 3);
+                out.push({ kind: 'ring', x, y: floorY, r: h.ringR * e, w: h.ringW, state: 'active', alpha: 1 });
+              } else if (ra < 0.6) {
+                out.push({ kind: 'ring', x, y: floorY, r: h.ringR, w: h.ringW, state: 'active', alpha: 1 });
+              } else if (ra < RING_T) {
+                const f = (ra - 0.6) / (RING_T - 0.6);
+                out.push({ kind: 'ring', x, y: floorY, r: h.ringR * (1 + 0.15 * f), w: h.ringW * (1 - f), state: 'fx', alpha: 1 - f });
+              }
+            }
+          }
+        }
+
+        // nuvem: fileira de bolhas na borda que ondula; desce no aviso e sobe no fim
+        let slide = 1, state = 'active', alpha = 1;
+        if (lt < h.warn) { const p = lt / h.warn; slide = p; state = 'warn'; alpha = 0.15 + 0.45 * p; }
+        else if (lt > end) { const p = (lt - end) / CLOUD_OUT; if (p >= 1) return; slide = 1 - p; state = 'fx'; alpha = 1 - p; }
+        const STEP = 26;
+        for (let k = -1; k * STEP < W + STEP; k++) {
+          const wob = Math.sin(TAU * 0.9 * lt + k * 1.7) * 0.5 + Math.sin(TAU * 1.7 * lt + k * 0.6) * 0.5;
+          const r = 19 + 5 * wob;
+          const y = edgeY + down * (-r + (CLOUD_Y + 4 + 3 * wob) * slide);
+          out.push({ kind: 'circle', x: k * STEP + 13, y, r, state, alpha });
+        }
+      },
+      hit(h, x, y, tol) {
+        const band = CLOUD_Y + 20;
+        return h.side ? y >= H - band - tol : y <= band + tol;
+      },
+    },
   };
+
+  // Trovão: altura da nuvem, tempo para ela sumir, duração do círculo oco
+  const CLOUD_Y = 14, CLOUD_OUT = 0.4, RING_T = 0.9;
+  function thunderFall(h) { return (H - CLOUD_Y) / (h.speed * 0.9); }
+  // número "aleatório" fixo por índice (o perigo continua sendo função pura do tempo)
+  function rnd(i, seed) { const s = Math.sin(i * 127.1 + seed * 311.7) * 43758.5453; return s - Math.floor(s); }
 
   // espaço entre os quadrados do rastro; quanto tempo cada um vive (o rastro tem ~"tail" quadrados);
   // distância que a cabeça percorre até sair da tela
@@ -219,7 +317,9 @@
   PF.hz = {
     lineEnds,
     create(type, x, y, time) {
-      return { id: seq++, type, time, x, y, ...JSON.parse(JSON.stringify(PF.HAZARDS[type].defaults)) };
+      const h = { id: seq++, type, time, x, y, ...JSON.parse(JSON.stringify(PF.HAZARDS[type].defaults)) };
+      if (PF.HAZARDS[type].init) PF.HAZARDS[type].init(h);
+      return h;
     },
     clone(h) { return { ...JSON.parse(JSON.stringify(h)), id: seq++ }; },
     window(h) {
@@ -241,7 +341,9 @@
       if (s.kind === 'ring') return Math.abs(Math.hypot(px - s.x, py - s.y) - s.r) < s.w / 2 + pr;
       if (s.kind === 'line') return u.distToSeg(px, py, s.x1, s.y1, s.x2, s.y2) < s.w / 2 + pr;
       if (s.kind === 'rect') {
-        const dx = Math.max(0, Math.abs(px - s.x) - s.w / 2), dy = Math.max(0, Math.abs(py - s.y) - s.h / 2);
+        let lx = px - s.x, ly = py - s.y;
+        if (s.rot) { const c = Math.cos(-s.rot), n = Math.sin(-s.rot); [lx, ly] = [lx * c - ly * n, lx * n + ly * c]; }
+        const dx = Math.max(0, Math.abs(lx) - s.w / 2), dy = Math.max(0, Math.abs(ly) - s.h / 2);
         return dx * dx + dy * dy < pr * pr;
       }
       return false;

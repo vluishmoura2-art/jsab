@@ -74,7 +74,9 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   (tamanho, tempo p/ explodir, qtd./velocidade/tamanho das bolinhas), Linha e Círculo
   (tempo p/ aparecer, tempo ativa, grossura), Rastro/snake (dir., largura, altura, velocidade,
   quadrados atrás; a cabeça pulsa e solta quadrados que nascem com brilho, ficam parados e
-  encolhem até sumir). Timeline, painel, desfazer, modo teste.
+  encolhem até sumir), Trovão (nuvem ondulada na borda de cima ou de baixo, lado escolhido pelo
+  clique; durante a duração solta partículas e, a cada N s, um quadrado girando que abre um
+  círculo oco ao bater na borda oposta; `init(h)` no perigo roda ao criar). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;
