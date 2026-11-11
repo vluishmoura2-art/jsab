@@ -48,6 +48,15 @@
       }
     } else if (s.kind === 'rect') {
       if (s.rot) { ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.translate(-s.x, -s.y); }
+      if (s.noGlow) ctx.shadowBlur = 0;
+      if (s.round && ctx.roundRect) { // colunas da água: topo arredondado
+        if (s.light) ctx.fillStyle = '#FF7483';
+        ctx.beginPath();
+        ctx.roundRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, [s.round, s.round, 0, 0]);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
       if (s.head) { ctx.fillStyle = '#FFD3DA'; ctx.shadowColor = '#FFD3DA'; ctx.shadowBlur = 22; } // cabeça, quase branca
       ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       if (s.flash > 0) { // brilho ao nascer
@@ -158,6 +167,21 @@
         ctx.globalAlpha *= 0.5;
         ctx.stroke();
         ctx.globalAlpha /= 0.5;
+      } else if (h.type === 'water') {
+        // altura inicial (contorno) e final (linha pontilhada)
+        ctx.strokeRect(0, H - h.height, W, h.height);
+        if (h.heightEnd !== h.height) {
+          ctx.setLineDash([2 / scale, 5 / scale]);
+          ctx.beginPath();
+          ctx.moveTo(0, H - h.heightEnd); ctx.lineTo(W, H - h.heightEnd);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.beginPath(); // seta da inicial para a final
+          const d = h.heightEnd > h.height ? -1 : 1, x = W - 60, y0 = H - h.height, y1 = H - h.heightEnd;
+          ctx.moveTo(x, y0); ctx.lineTo(x, y1);
+          ctx.moveTo(x - 6, y1 - d * 8); ctx.lineTo(x, y1); ctx.lineTo(x + 6, y1 - d * 8);
+          ctx.stroke();
+        }
       } else if (h.type === 'thunder') {
         // faixa da nuvem e setas no sentido da queda
         const top = !h.side, band = 34, y0 = top ? 0 : H - band;
@@ -176,7 +200,7 @@
       ctx.setLineDash([]);
       const hs = (sel ? 5 : 3.5) / scale;
       const hx = h.type === 'thunder' ? u.clamp(h.x, 20, W - 20) : h.x;
-      const hy = h.type === 'thunder' ? (h.side ? H - 17 : 17) : h.y;
+      const hy = h.type === 'thunder' ? (h.side ? H - 17 : 17) : h.type === 'water' ? H - h.height : h.y;
       ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
       ctx.restore();
     }

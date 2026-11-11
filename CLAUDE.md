@@ -78,7 +78,8 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   clique; durante a duração solta partículas e, a cada N s, um quadrado girando que abre um
   círculo oco ao bater na borda oposta; `init(h)` no perigo roda ao criar), Linha dupla (duas fileiras de círculos
   cheios/ocos intercalados; modo Centro largura×altura, Vertical ou Horizontal na tela toda;
-  aviso que se estende, entrada/saída em onda, pulso e fluxo ao longo da faixa). Timeline, painel, desfazer, modo teste.
+  aviso que se estende, entrada/saída em onda, pulso e fluxo ao longo da faixa), Água (só embaixo; colunas arredondadas com ondas;
+  altura vai da inicial à final ao longo do bloco, sobe e escoa; arrastar no mapa muda a altura). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;

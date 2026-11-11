@@ -159,7 +159,7 @@
 
     const s2 = section('Como usar');
     const items = [
-      ['1 – 7','escolher perigo e clicar no mapa'],
+      ['1 – 8','escolher perigo e clicar no mapa'],
       ['V / Esc', 'ferramenta de seleção'],
       ['Arrastar', 'mover no mapa ou na timeline'],
       ['Shift', 'encaixar na grade ao arrastar'],

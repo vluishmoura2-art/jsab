@@ -362,6 +362,66 @@
     },
   };
 
+  // Água: tempo para subir / escoar e altura da superfície num instante
+  const WATER_RISE = 0.5, WATER_DRAIN = 0.5;
+  function waterLevel(h, lt) {
+    const a = lt - h.warn;
+    if (a < 0) return 0;
+    const ease = p => p * p * (3 - 2 * p);
+    const p = u.clamp(a / Math.max(0.01, h.duration), 0, 1);
+    let lvl = h.height + (h.heightEnd - h.height) * ease(p);
+    if (a < WATER_RISE) lvl *= 1 - Math.pow(1 - a / WATER_RISE, 3);
+    const d = a - h.duration;
+    if (d > 0) lvl *= 1 - ease(u.clamp(d / WATER_DRAIN, 0, 1));
+    return lvl;
+  }
+
+  PF.HAZARDS.water = {
+    label: 'Água',
+    desc: 'Água que sobe do fundo da fase, feita de colunas com a superfície ondulando. Durante o bloco na timeline a altura vai suavemente da inicial até a final; no fim ela escoa. Para fazer a água subir e descer várias vezes, use vários blocos.',
+    defaults: { warn: 0.8, duration: 6, height: 140, heightEnd: 140, waveAmp: 18, waveSpeed: 1.2, barW: 12 },
+    props: [
+      { key: 'warn', label: 'Tempo para subir (aviso)', min: 0, max: 5, step: 0.05, unit: 's' },
+      { key: 'duration', label: 'Duração', min: 0.5, max: 600, step: 0.5, unit: 's' },
+      { key: 'height', label: 'Altura inicial', min: 10, max: 700, step: 1, unit: 'px' },
+      { key: 'heightEnd', label: 'Altura final', min: 10, max: 700, step: 1, unit: 'px' },
+      { key: 'waveAmp', label: 'Tamanho das ondas', min: 0, max: 150, step: 1, unit: 'px' },
+      { key: 'waveSpeed', label: 'Velocidade das ondas', min: 0, max: 6, step: 0.1, unit: 'Hz' },
+      { key: 'barW', label: 'Largura das colunas', min: 6, max: 60, step: 1, unit: 'px' },
+    ],
+    // só fica embaixo: a alça vai para a superfície, no meio da tela
+    init(h) { h.x = W / 2; h.y = H - h.height; },
+    lead: () => 0,
+    warnLen: h => h.warn,
+    length: h => h.warn + h.duration + WATER_DRAIN,
+    shapes(h, lt, out) {
+      if (lt < 0) return;
+      if (lt < h.warn) {
+        // aviso: linha tracejada onde a superfície vai chegar, ficando mais forte
+        const p = lt / h.warn, y = H - h.height;
+        out.push({ kind: 'line', x1: 0, y1: y, x2: W, y2: y, w: 3, state: 'warn', alpha: 0.1 + 0.5 * p });
+        out.push({ kind: 'rect', x: W / 2, y: H - 3 * p, w: W, h: 6 * p, state: 'warn', alpha: 0.2 + 0.4 * p });
+        return;
+      }
+      const lvl = waterLevel(h, lt);
+      if (lvl < 1) return;
+      const a = lt - h.warn, draining = a > h.duration;
+      const amp = Math.min(h.waveAmp, lvl * 0.6);
+      const gap = Math.max(1, h.barW * 0.14), step = h.barW + gap;
+      const w1 = TAU * h.waveSpeed * a, k1 = TAU / 520, k2 = TAU / 190, k3 = TAU / 1500;
+      for (let x = step / 2; x < W + step; x += step) {
+        // ondas que andam + uma ondulação larga e lenta + cada coluna balança um pouco
+        const wave = 0.55 * Math.sin(k1 * x - w1) + 0.25 * Math.sin(k2 * x + w1 * 1.7)
+          + 0.35 * Math.sin(k3 * x - w1 * 0.35) + 0.08 * Math.sin(x * 0.9 + w1 * 3);
+        const top = H - Math.max(4, lvl + amp * wave);
+        const bh = H - top + 8;
+        out.push({ kind: 'rect', x, y: top + bh / 2, w: h.barW, h: bh, round: h.barW / 2,
+          state: draining ? 'fx' : 'active', alpha: draining ? 0.85 : 1, noGlow: true, light: wave > 0.75 });
+      }
+    },
+    hit(h, x, y, tol) { return y >= H - Math.max(h.height, h.heightEnd) - tol; },
+  };
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
