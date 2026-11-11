@@ -39,6 +39,15 @@
       ctx.arc(s.x, s.y, Math.max(0.1, s.r), 0, TAU);
       ctx.lineWidth = Math.max(0.5, s.w);
       ctx.stroke();
+    } else if (s.kind === 'rect') {
+      if (s.head) ctx.fillStyle = '#FFD3DA'; // cabeça do rastro, quase branca
+      ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
+      if (s.state === 'warn') {
+        ctx.globalAlpha = Math.min(1, s.alpha * 2);
+        ctx.setLineDash([6, 6]);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
+      }
     } else if (s.kind === 'line') {
       ctx.lineCap = 'round';
       ctx.lineWidth = Math.max(0.5, s.w);
@@ -109,6 +118,22 @@
         } else {
           ctx.arc(h.x, h.y, h.radius, 0, TAU);
         }
+        ctx.stroke();
+      } else if (h.type === 'snake') {
+        ctx.strokeRect(h.x - h.width / 2, h.y - h.height / 2, h.width, h.height);
+        const d = h.dir, x0 = h.x + d * (h.width / 2 + 6), x1 = h.x + d * (h.width / 2 + 46);
+        // contorno do rastro atrás
+        const tailLen = h.tail * h.width * 1.12;
+        if (tailLen > 0) {
+          ctx.globalAlpha *= 0.5;
+          const xe = h.x - d * (h.width / 2), xs = xe - d * tailLen;
+          ctx.strokeRect(Math.min(xs, xe), h.y - h.height / 2, Math.abs(xe - xs), h.height);
+          ctx.globalAlpha /= 0.5;
+        }
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(x0, h.y); ctx.lineTo(x1, h.y);
+        ctx.moveTo(x1 - d * 8, h.y - 6); ctx.lineTo(x1, h.y); ctx.lineTo(x1 - d * 8, h.y + 6);
         ctx.stroke();
       }
 

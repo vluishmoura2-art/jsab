@@ -205,6 +205,7 @@
     explosive: '<circle cx="12" cy="12" r="4.5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
     line: '<path d="M3 19L21 5" stroke-width="3.5" stroke-linecap="round"/>',
     circle: '<circle cx="12" cy="12" r="8" stroke-width="3"/>',
+    snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
   const TOOLS = [
     { id: 'select', label: 'Selecionar', key: 'V' },
@@ -212,6 +213,7 @@
     { id: 'explosive', label: 'Explosiva', key: '2' },
     { id: 'line', label: 'Linha', key: '3' },
     { id: 'circle', label: 'Círculo', key: '4' },
+    { id: 'snake', label: 'Rastro', key: '5' },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
@@ -588,6 +590,7 @@
       case '2': setTool('explosive'); break;
       case '3': setTool('line'); break;
       case '4': setTool('circle'); break;
+      case '5': setTool('snake'); break;
       case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'home': pause(); app.setTime(0); PF.timeline.scroll = 0; break;

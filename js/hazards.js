@@ -156,7 +156,53 @@
         return h.thickness > 0 ? Math.abs(d - h.radius) <= Math.max(h.thickness / 2, tol) : d <= h.radius;
       },
     },
+
+    snake: {
+      label: 'Rastro',
+      desc: 'Um quadrado que corre em linha reta deixando um rastro de quadrados atrás de si. Os últimos do rastro vão diminuindo. Todos causam dano.',
+      defaults: { dir: 1, width: 30, height: 30, speed: 520, tail: 16 },
+      props: [
+        { key: 'dir', label: 'Direção', type: 'select', options: [[1, 'Direita →'], [-1, '← Esquerda']] },
+        { key: 'width', label: 'Largura', min: 4, max: 200, step: 1, unit: 'px' },
+        { key: 'height', label: 'Altura', min: 4, max: 200, step: 1, unit: 'px' },
+        { key: 'speed', label: 'Velocidade', min: 20, max: 2000, step: 10, unit: 'px/s' },
+        { key: 'tail', label: 'Quadrados atrás', min: 0, max: 60, step: 1 },
+      ],
+      lead: () => BALL_WARN,
+      warnLen: () => 0,
+      length(h) {
+        const edge = h.dir > 0 ? W - h.x : h.x;
+        return Math.max(0, edge + h.width / 2 + h.tail * snakeGap(h)) / h.speed;
+      },
+      shapes(h, lt, out) {
+        if (lt < 0) {
+          out.push({ kind: 'rect', x: h.x, y: h.y, w: h.width, h: h.height, state: 'warn', alpha: 0.1 + 0.35 * (1 + lt / BALL_WARN) });
+          return;
+        }
+        const head = h.speed * lt, gap = snakeGap(h);
+        // do fim do rastro para a cabeça, assim a cabeça fica por cima
+        for (let i = h.tail; i >= 0; i--) {
+          const back = i * gap;
+          if (back > head) continue; // ainda não saiu do ponto de partida
+          const k = snakeScale(i, h.tail);
+          const w = h.width * k, hh = h.height * k;
+          const x = h.x + h.dir * (head - back);
+          if (off(x, h.y, Math.max(w, hh) / 2)) continue;
+          out.push({ kind: 'rect', x, y: h.y, w, h: hh, state: 'active', alpha: i === 0 ? 1 : 0.92, head: i === 0 });
+        }
+      },
+      hit: (h, x, y, tol) => Math.abs(x - h.x) <= Math.max(h.width / 2, tol) && Math.abs(y - h.y) <= Math.max(h.height / 2, tol),
+    },
   };
+
+  // espaço entre os quadrados do rastro e o tamanho de cada um (os últimos ~35% diminuem)
+  function snakeGap(h) { return h.width * 1.12; }
+  function snakeScale(i, n) {
+    if (i === 0) return 1.12; // cabeça um pouco maior
+    const start = Math.max(1, Math.floor(n * 0.65));
+    if (i < start || n <= start) return 1;
+    return 1 - 0.55 * (i - start + 1) / (n - start + 1);
+  }
 
   let seq = 1;
 
@@ -184,6 +230,10 @@
       if (s.kind === 'circle') return Math.hypot(px - s.x, py - s.y) < s.r + pr;
       if (s.kind === 'ring') return Math.abs(Math.hypot(px - s.x, py - s.y) - s.r) < s.w / 2 + pr;
       if (s.kind === 'line') return u.distToSeg(px, py, s.x1, s.y1, s.x2, s.y2) < s.w / 2 + pr;
+      if (s.kind === 'rect') {
+        const dx = Math.max(0, Math.abs(px - s.x) - s.w / 2), dy = Math.max(0, Math.abs(py - s.y) - s.h / 2);
+        return dx * dx + dy * dy < pr * pr;
+      }
       return false;
     },
     normalize(raw) {

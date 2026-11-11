@@ -19,7 +19,7 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 - `js/config.js` — constantes, paleta, utilitários (`PF.u`)
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).
   Cada perigo é uma função pura do tempo: `shapes(h, tempoLocal, out)` gera formas
-  `circle | ring | line` com estado `warn | active | fx`. Só `active` causa dano.
+  `circle | ring | line | rect` com estado `warn | active | fx`. Só `active` causa dano.
 - `js/renderer.js` — desenho da arena, gizmos do editor e jogador
 - `js/timeline.js` — timeline em canvas (scrub, arrastar blocos, zoom)
 - `js/panel.js` — painel de propriedades gerado a partir de `props` de cada perigo
@@ -72,7 +72,8 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
 
 - **0.0.1** — perigos: Bola (dir., tamanho, velocidade, quantidade, recarga), Bola explosiva
   (tamanho, tempo p/ explodir, qtd./velocidade/tamanho das bolinhas), Linha e Círculo
-  (tempo p/ aparecer, tempo ativa, grossura). Timeline, painel, desfazer, modo teste.
+  (tempo p/ aparecer, tempo ativa, grossura), Rastro/snake (dir., largura, altura, velocidade,
+  quadrados atrás; os últimos ~35% do rastro diminuem). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;
