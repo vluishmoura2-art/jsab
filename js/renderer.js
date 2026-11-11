@@ -40,8 +40,13 @@
       ctx.lineWidth = Math.max(0.5, s.w);
       ctx.stroke();
     } else if (s.kind === 'rect') {
-      if (s.head) ctx.fillStyle = '#FFD3DA'; // cabeça do rastro, quase branca
+      if (s.head) { ctx.fillStyle = '#FFD3DA'; ctx.shadowColor = '#FFD3DA'; ctx.shadowBlur = 22; } // cabeça, quase branca
       ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
+      if (s.flash > 0) { // brilho ao nascer
+        ctx.globalAlpha = u.clamp(s.flash, 0, 1) * 0.8;
+        ctx.fillStyle = '#FFD3DA';
+        ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
+      }
       if (s.state === 'warn') {
         ctx.globalAlpha = Math.min(1, s.alpha * 2);
         ctx.setLineDash([6, 6]);

@@ -73,7 +73,8 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
 - **0.0.1** — perigos: Bola (dir., tamanho, velocidade, quantidade, recarga), Bola explosiva
   (tamanho, tempo p/ explodir, qtd./velocidade/tamanho das bolinhas), Linha e Círculo
   (tempo p/ aparecer, tempo ativa, grossura), Rastro/snake (dir., largura, altura, velocidade,
-  quadrados atrás; os últimos ~35% do rastro diminuem). Timeline, painel, desfazer, modo teste.
+  quadrados atrás; a cabeça pulsa e solta quadrados que nascem com brilho, ficam parados e
+  encolhem até sumir). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;

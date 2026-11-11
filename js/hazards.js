@@ -159,7 +159,7 @@
 
     snake: {
       label: 'Rastro',
-      desc: 'Um quadrado que corre em linha reta deixando um rastro de quadrados atrás de si. Os últimos do rastro vão diminuindo. Todos causam dano.',
+      desc: 'Um quadrado que corre em linha reta soltando quadrados de luz pelo caminho. Cada quadrado nasce com um brilho, fica onde caiu e vai encolhendo até sumir. Todos causam dano.',
       defaults: { dir: 1, width: 30, height: 30, speed: 520, tail: 16 },
       props: [
         { key: 'dir', label: 'Direção', type: 'select', options: [[1, 'Direita →'], [-1, '← Esquerda']] },
@@ -170,39 +170,49 @@
       ],
       lead: () => BALL_WARN,
       warnLen: () => 0,
-      length(h) {
-        const edge = h.dir > 0 ? W - h.x : h.x;
-        return Math.max(0, edge + h.width / 2 + h.tail * snakeGap(h)) / h.speed;
-      },
+      length: h => snakeRun(h) / h.speed + snakeLife(h),
       shapes(h, lt, out) {
         if (lt < 0) {
           out.push({ kind: 'rect', x: h.x, y: h.y, w: h.width, h: h.height, state: 'warn', alpha: 0.1 + 0.35 * (1 + lt / BALL_WARN) });
           return;
         }
-        const head = h.speed * lt, gap = snakeGap(h);
-        // do fim do rastro para a cabeça, assim a cabeça fica por cima
-        for (let i = h.tail; i >= 0; i--) {
-          const back = i * gap;
-          if (back > head) continue; // ainda não saiu do ponto de partida
-          const k = snakeScale(i, h.tail);
-          const w = h.width * k, hh = h.height * k;
-          const x = h.x + h.dir * (head - back);
+        const gap = snakeGap(h), life = snakeLife(h), run = snakeRun(h);
+        const head = Math.min(h.speed * lt, run);
+        // quadrados soltos pela cabeça a cada "gap": ficam parados e encolhem com a idade.
+        // do mais velho para o mais novo, assim os novos ficam por cima
+        const kMin = Math.max(1, Math.ceil((h.speed * (lt - life)) / gap));
+        const kMax = Math.floor(head / gap);
+        for (let k = kMin; k <= kMax; k++) {
+          const age = lt - k * gap / h.speed;
+          const p = age / life; // 0 = acabou de nascer, 1 = sumiu
+          if (p < 0 || p >= 1) continue;
+          let s, a = 0.9;
+          if (age < 0.09) s = 1.3 - 0.3 * (age / 0.09);        // nasce com um "pop"
+          else if (p < 0.55) s = 1;
+          else s = 1 - 0.8 * ((p - 0.55) / 0.45);               // encolhe até sumir
+          if (p > 0.8) a = 0.9 * (1 - (p - 0.8) / 0.2) + 0.15;
+          const x = h.x + h.dir * k * gap, w = h.width * s, hh = h.height * s;
           if (off(x, h.y, Math.max(w, hh) / 2)) continue;
-          out.push({ kind: 'rect', x, y: h.y, w, h: hh, state: 'active', alpha: i === 0 ? 1 : 0.92, head: i === 0 });
+          out.push({ kind: 'rect', x, y: h.y, w, h: hh, state: s < 0.3 ? 'fx' : 'active', alpha: a, flash: age < 0.09 ? 1 - age / 0.09 : 0 });
+        }
+        // cabeça: pulsa enquanto corre
+        if (h.speed * lt <= run) {
+          const k = 1.12 * (1 + 0.07 * Math.sin(TAU * 7 * lt));
+          const x = h.x + h.dir * head;
+          if (!off(x, h.y, Math.max(h.width, h.height) * k / 2)) {
+            out.push({ kind: 'rect', x, y: h.y, w: h.width * k, h: h.height * k, state: 'active', alpha: 1, head: true });
+          }
         }
       },
       hit: (h, x, y, tol) => Math.abs(x - h.x) <= Math.max(h.width / 2, tol) && Math.abs(y - h.y) <= Math.max(h.height / 2, tol),
     },
   };
 
-  // espaço entre os quadrados do rastro e o tamanho de cada um (os últimos ~35% diminuem)
+  // espaço entre os quadrados do rastro; quanto tempo cada um vive (o rastro tem ~"tail" quadrados);
+  // distância que a cabeça percorre até sair da tela
   function snakeGap(h) { return h.width * 1.12; }
-  function snakeScale(i, n) {
-    if (i === 0) return 1.12; // cabeça um pouco maior
-    const start = Math.max(1, Math.floor(n * 0.65));
-    if (i < start || n <= start) return 1;
-    return 1 - 0.55 * (i - start + 1) / (n - start + 1);
-  }
+  function snakeLife(h) { return h.tail * snakeGap(h) / h.speed; }
+  function snakeRun(h) { return Math.max(0, (h.dir > 0 ? W - h.x : h.x) + h.width); }
 
   let seq = 1;
 
