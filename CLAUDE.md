@@ -76,7 +76,9 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   quadrados atrás; a cabeça pulsa e solta quadrados que nascem com brilho, ficam parados e
   encolhem até sumir), Trovão (nuvem ondulada na borda de cima ou de baixo, lado escolhido pelo
   clique; durante a duração solta partículas e, a cada N s, um quadrado girando que abre um
-  círculo oco ao bater na borda oposta; `init(h)` no perigo roda ao criar). Timeline, painel, desfazer, modo teste.
+  círculo oco ao bater na borda oposta; `init(h)` no perigo roda ao criar), Linha dupla (duas fileiras de círculos
+  cheios/ocos intercalados; modo Centro largura×altura, Vertical ou Horizontal na tela toda;
+  aviso que se estende, entrada/saída em onda, pulso e fluxo ao longo da faixa). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;

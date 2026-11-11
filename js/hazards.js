@@ -298,7 +298,78 @@
         return h.side ? y >= H - band - tol : y <= band + tol;
       },
     },
+
+    double: {
+      label: 'Linha dupla',
+      desc: 'Faixa com duas fileiras de círculos intercalados (cheios e ocos). Modo Centro: fica no ponto escolhido com a largura e a altura dadas. Vertical: cobre a tela de cima a baixo, grossura = largura. Horizontal: cobre a tela de lado a lado, grossura = altura. Os círculos correm ao longo da faixa conforme o fluxo.',
+      defaults: { mode: 1, warn: 1, active: 2, width: 70, height: 320, flow: 120 },
+      props: [
+        { key: 'mode', label: 'Posição', type: 'select', options: [[0, 'Centro (largura × altura)'], [1, 'Vertical (tela toda)'], [2, 'Horizontal (tela toda)']] },
+        WARN_PROP, ACTIVE_PROP,
+        { key: 'width', label: 'Largura', min: 16, max: 1280, step: 1, unit: 'px' },
+        { key: 'height', label: 'Altura', min: 16, max: 720, step: 1, unit: 'px' },
+        { key: 'flow', label: 'Fluxo (0 = parado)', min: -800, max: 800, step: 10, unit: 'px/s' },
+      ],
+      lead: () => 0,
+      warnLen: h => h.warn,
+      length: h => h.warn + h.active + DBL_OUT,
+      shapes(h, lt, out) {
+        if (lt < 0) return;
+        const b = doubleBox(h);
+        const ax = b.vert ? 0 : 1, ay = b.vert ? 1 : 0; // eixo da faixa
+        const nx = ay, ny = ax;                         // eixo da grossura
+        const half = b.len / 2;
+        if (lt < h.warn) {
+          // aviso: faixa translúcida que se estende do centro para as pontas
+          const p = lt / h.warn, e = half * (0.25 + 0.75 * (1 - Math.pow(1 - p, 2)));
+          out.push({ kind: 'line', x1: b.cx - ax * e, y1: b.cy - ay * e, x2: b.cx + ax * e, y2: b.cy + ay * e,
+            w: b.thick, state: 'warn', alpha: 0.05 + 0.3 * p });
+          return;
+        }
+        const a = lt - h.warn, endT = h.active;
+        const r = b.thick / 4 * 1.08, sp = r * 1.7;
+        const shift = ((h.flow * a) % (2 * sp) + 2 * sp) % (2 * sp);
+        const n = Math.ceil(b.len / sp) + 3;
+        const beat = 1 + 0.06 * Math.sin(TAU * 4 * a); // pulsa
+        for (let lane = 0; lane < 2; lane++) {
+          const off = (lane ? 1 : -1) * b.thick / 4;
+          for (let i = -2; i < n; i++) {
+            const d = -half + i * sp + (lane ? sp / 2 : 0) + shift - sp; // posição ao longo da faixa
+            if (d < -half - r * 0.2 || d > half + r * 0.2) continue;
+            const q = (d + half) / b.len; // 0..1 ao longo da faixa: entra e sai em onda
+            const tin = a - q * DBL_WAVE, tout = a - endT - q * DBL_WAVE;
+            let s;
+            if (tin < 0) continue;
+            if (tin < 0.12) s = 1.4 - 0.4 * tin / 0.12;
+            else s = beat;
+            let state = 'active', alpha = 1;
+            if (tout > 0) { const f = tout / (DBL_OUT - DBL_WAVE); if (f >= 1) continue; s *= 1 - f; alpha = 1 - f * 0.5; if (s < 0.35) state = 'fx'; }
+            const x = b.cx + ax * d + nx * off, y = b.cy + ay * d + ny * off;
+            // alterna cheio/oco ao longo da fileira e entre as fileiras (o fluxo anda 2 posições por ciclo)
+            const hollow = (((i + lane) % 2) + 2) % 2 === 1;
+            const rr = r * s;
+            out.push(hollow
+              ? { kind: 'ring', x, y, r: rr * 0.8, w: rr * 0.4, state, alpha, core: true }
+              : { kind: 'circle', x, y, r: rr, state, alpha });
+          }
+        }
+      },
+      hit(h, x, y, tol) {
+        const b = doubleBox(h);
+        const hw = (b.vert ? b.thick : b.len) / 2, hh = (b.vert ? b.len : b.thick) / 2;
+        return Math.abs(x - b.cx) <= Math.max(hw, tol) && Math.abs(y - b.cy) <= Math.max(hh, tol);
+      },
+    },
   };
+
+  // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
+  const DBL_WAVE = 0.3, DBL_OUT = 0.55;
+  function doubleBox(h) {
+    if (h.mode === 1) return { cx: h.x, cy: H / 2, len: H + 40, thick: h.width, vert: true };
+    if (h.mode === 2) return { cx: W / 2, cy: h.y, len: W + 40, thick: h.height, vert: false };
+    const vert = h.height >= h.width;
+    return { cx: h.x, cy: h.y, len: vert ? h.height : h.width, thick: vert ? h.width : h.height, vert };
+  }
 
   // Trovão: altura da nuvem, tempo para ela sumir, duração do círculo oco
   const CLOUD_Y = 14, CLOUD_OUT = 0.4, RING_T = 0.9;
@@ -316,6 +387,7 @@
 
   PF.hz = {
     lineEnds,
+    doubleBox,
     create(type, x, y, time) {
       const h = { id: seq++, type, time, x, y, ...JSON.parse(JSON.stringify(PF.HAZARDS[type].defaults)) };
       if (PF.HAZARDS[type].init) PF.HAZARDS[type].init(h);

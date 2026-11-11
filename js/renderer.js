@@ -39,6 +39,13 @@
       ctx.arc(s.x, s.y, Math.max(0.1, s.r), 0, TAU);
       ctx.lineWidth = Math.max(0.5, s.w);
       ctx.stroke();
+      if (s.core && s.r > s.w / 2) { // miolo escuro: o brilho não "enche" o anel
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = C.bg;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r - s.w / 2, 0, TAU);
+        ctx.fill();
+      }
     } else if (s.kind === 'rect') {
       if (s.rot) { ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.translate(-s.x, -s.y); }
       if (s.head) { ctx.fillStyle = '#FFD3DA'; ctx.shadowColor = '#FFD3DA'; ctx.shadowBlur = 22; } // cabeça, quase branca
@@ -141,6 +148,16 @@
         ctx.moveTo(x0, h.y); ctx.lineTo(x1, h.y);
         ctx.moveTo(x1 - d * 8, h.y - 6); ctx.lineTo(x1, h.y); ctx.lineTo(x1 - d * 8, h.y + 6);
         ctx.stroke();
+      } else if (h.type === 'double') {
+        const b = PF.hz.doubleBox(h);
+        const bw = b.vert ? b.thick : b.len, bh = b.vert ? b.len : b.thick;
+        ctx.strokeRect(b.cx - bw / 2, b.cy - bh / 2, bw, bh);
+        ctx.beginPath(); // divisão entre as duas fileiras
+        if (b.vert) { ctx.moveTo(b.cx, b.cy - bh / 2); ctx.lineTo(b.cx, b.cy + bh / 2); }
+        else { ctx.moveTo(b.cx - bw / 2, b.cy); ctx.lineTo(b.cx + bw / 2, b.cy); }
+        ctx.globalAlpha *= 0.5;
+        ctx.stroke();
+        ctx.globalAlpha /= 0.5;
       } else if (h.type === 'thunder') {
         // faixa da nuvem e setas no sentido da queda
         const top = !h.side, band = 34, y0 = top ? 0 : H - band;
