@@ -422,6 +422,58 @@
     hit(h, x, y, tol) { return y >= H - Math.max(h.height, h.heightEnd) - tol; },
   };
 
+  // Roda: direções (dx, dy) e distância até sair da tela
+  const WHEEL_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  function wheelRun(h) {
+    const m = h.radius + h.size * 1.2;
+    return Math.max(0, [W - h.x, h.x, H - h.y, h.y][h.dir] + m);
+  }
+
+  PF.HAZARDS.wheel = {
+    label: 'Roda',
+    desc: 'Um anel de alvos que gira sem parar e anda em linha reta numa direção fixa (direita, esquerda, baixo ou cima) até sair da tela. O tamanho do arco é o raio da roda.',
+    defaults: { dir: 0, radius: 90, count: 10, size: 20, speed: 160, spin: 90 },
+    props: [
+      { key: 'dir', label: 'Direção', type: 'select', options: [[0, 'Direita →'], [1, '← Esquerda'], [2, 'Baixo ↓'], [3, 'Cima ↑']] },
+      { key: 'radius', label: 'Tamanho do arco', min: 20, max: 500, step: 1, unit: 'px' },
+      { key: 'count', label: 'Quantidade de rodas', min: 2, max: 32, step: 1 },
+      { key: 'size', label: 'Tamanho de cada roda', min: 6, max: 80, step: 1, unit: 'px' },
+      { key: 'speed', label: 'Velocidade de movimento', min: 20, max: 1500, step: 10, unit: 'px/s' },
+      { key: 'spin', label: 'Velocidade do giro (− = anti-horário)', min: -720, max: 720, step: 5, unit: '°/s' },
+    ],
+    lead: () => BALL_WARN,
+    warnLen: () => 0,
+    length: h => wheelRun(h) / h.speed,
+    shapes(h, lt, out) {
+      const [dx, dy] = WHEEL_DIRS[h.dir] || WHEEL_DIRS[0];
+      const a = Math.max(0, lt);
+      const cx = h.x + dx * h.speed * a, cy = h.y + dy * h.speed * a;
+      const base = h.spin * Math.PI / 180 * a;
+      if (lt < 0) {
+        // aviso: o contorno da roda aparece tracejado
+        const al = 0.1 + 0.4 * (1 + lt / BALL_WARN);
+        out.push({ kind: 'ring', x: cx, y: cy, r: h.radius, w: 2, state: 'warn', alpha: al, dashed: true });
+        for (let k = 0; k < h.count; k++) {
+          const ang = TAU * k / h.count;
+          out.push({ kind: 'circle', x: cx + Math.cos(ang) * h.radius, y: cy + Math.sin(ang) * h.radius, r: h.size, state: 'warn', alpha: al * 0.6 });
+        }
+        return;
+      }
+      // abre do centro ao surgir e cada alvo pulsa de leve, um depois do outro
+      const open = a < 0.25 ? 1 - Math.pow(1 - a / 0.25, 3) : 1;
+      const R = h.radius * (0.35 + 0.65 * open);
+      for (let k = 0; k < h.count; k++) {
+        const ang = base + TAU * k / h.count;
+        const x = cx + Math.cos(ang) * R, y = cy + Math.sin(ang) * R;
+        const s = h.size * (1 + 0.06 * Math.sin(TAU * 2 * a - k * 0.8)) * (a < 0.12 ? 1.3 - 0.3 * a / 0.12 : 1);
+        if (off(x, y, s)) continue;
+        out.push({ kind: 'ring', x, y, r: s * 0.78, w: s * 0.44, state: 'active', alpha: 1, core: true });
+        out.push({ kind: 'circle', x, y, r: s * 0.3, state: 'active', alpha: 1 });
+      }
+    },
+    hit: (h, x, y, tol) => Math.abs(Math.hypot(x - h.x, y - h.y) - h.radius) <= h.size + tol || Math.hypot(x - h.x, y - h.y) <= tol * 2,
+  };
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {

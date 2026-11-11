@@ -167,6 +167,23 @@
         ctx.globalAlpha *= 0.5;
         ctx.stroke();
         ctx.globalAlpha /= 0.5;
+      } else if (h.type === 'wheel') {
+        ctx.arc(h.x, h.y, h.radius, 0, TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        for (let k = 0; k < h.count; k++) {
+          const ang = TAU * k / h.count, x = h.x + Math.cos(ang) * h.radius, y = h.y + Math.sin(ang) * h.radius;
+          ctx.moveTo(x + h.size, y);
+          ctx.arc(x, y, h.size, 0, TAU);
+        }
+        // seta na direção do movimento
+        const [dx, dy] = [[1, 0], [-1, 0], [0, 1], [0, -1]][h.dir] || [1, 0];
+        const r0 = h.radius + h.size + 8, r1 = r0 + 40;
+        const ax = h.x + dx * r1, ay = h.y + dy * r1, px = -dy, py = dx;
+        ctx.moveTo(h.x + dx * r0, h.y + dy * r0); ctx.lineTo(ax, ay);
+        ctx.moveTo(ax - dx * 8 + px * 6, ay - dy * 8 + py * 6); ctx.lineTo(ax, ay); ctx.lineTo(ax - dx * 8 - px * 6, ay - dy * 8 - py * 6);
+        ctx.stroke();
       } else if (h.type === 'water') {
         // altura inicial (contorno) e final (linha pontilhada)
         ctx.strokeRect(0, H - h.height, W, h.height);

@@ -219,6 +219,7 @@
     thunder: '<path d="M4 6.5a3 3 0 0 1 5-2 3.5 3.5 0 0 1 6.5 0 3 3 0 0 1 4.5 2.5H4z" fill="currentColor"/><path d="M12.5 10l-2.5 4h3l-2 4.5" stroke-linecap="round"/><circle cx="6" cy="13" r="1" fill="currentColor"/><circle cx="18" cy="15" r="1" fill="currentColor"/><circle cx="16" cy="20" r="1" fill="currentColor"/>',
     double: '<circle cx="9" cy="4.5" r="2.6" fill="currentColor"/><circle cx="15" cy="8.5" r="2.2"/><circle cx="9" cy="12.5" r="2.2"/><circle cx="15" cy="16.5" r="2.6" fill="currentColor"/><circle cx="9" cy="20" r="2.2"/>',
     water: '<path d="M3 21V13c2 0 2.5-2 4.5-2s2.5 2 4.5 2 2.5-2 4.5-2 2.5 2 4.5 2v8z" fill="currentColor"/><path d="M8 7c1.5-1 3-1 4.5 0M12 4c1.5-1 3-1 4.5 0" stroke-linecap="round"/>',
+    wheel: '<circle cx="12" cy="4.5" r="2.3"/><circle cx="19.5" cy="12" r="2.3"/><circle cx="12" cy="19.5" r="2.3"/><circle cx="4.5" cy="12" r="2.3"/><circle cx="17.3" cy="6.7" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="6.7" r="1.6" fill="currentColor" stroke="none"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
   const TOOLS = [
@@ -231,6 +232,7 @@
     { id: 'thunder', label: 'Trovão', key: '6' },
     { id: 'double', label: 'Linha dupla', key: '7' },
     { id: 'water', label: 'Água', key: '8' },
+    { id: 'wheel', label: 'Roda', key: '9' },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
@@ -611,6 +613,7 @@
       case '6': setTool('thunder'); break;
       case '7': setTool('double'); break;
       case '8': setTool('water'); break;
+      case '9': setTool('wheel'); break;
       case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'home': pause(); app.setTime(0); PF.timeline.scroll = 0; break;

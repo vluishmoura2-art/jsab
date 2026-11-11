@@ -1,9 +1,9 @@
 // Timeline em canvas: régua, uma faixa por tipo de perigo, playhead, arrastar e zoom.
 (function () {
   const { C, u } = PF;
-  const GUT = 100, RULER = 24, MUS = 30, LANE = 26;
+  const GUT = 100, RULER = 24, MUS = 30, LANE = 24;
   const TOP = RULER + MUS; // início das faixas de perigos
-  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake', 'thunder', 'double', 'water'];
+  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake', 'thunder', 'double', 'water', 'wheel'];
   const FONT_MONO = '10px "JetBrains Mono", monospace';
   const FONT_UI = '11px "Space Grotesk", system-ui, sans-serif';
 
