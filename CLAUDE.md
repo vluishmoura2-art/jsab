@@ -20,6 +20,10 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).
   Cada perigo é uma função pura do tempo: `shapes(h, tempoLocal, out)` gera formas
   `circle | ring | line | rect` com estado `warn | active | fx`. Só `active` causa dano.
+- `js/levelcheck.js` — `PF.levelCheck(level, budgetMs)`: verifica se a fase é possível simulando
+  numa grade 16px todos os lugares alcançáveis (andar, dash invencível, 3 vidas + invencibilidade
+  após dano). Generosa: só acusa impossível de verdade. Usada antes de publicar e no servidor
+  (que recusa com 400). Passou do limite de tempo → aceita (`partial`).
 - `js/renderer.js` — desenho da arena, gizmos do editor e jogador
 - `js/timeline.js` — timeline em canvas (scrub, arrastar blocos, zoom)
 - `js/panel.js` — painel de propriedades gerado a partir de `props` de cada perigo
@@ -38,8 +42,11 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   lista + JSON de cada fase, até 300, sem música): baixada em segundo plano, usada sem conexão.
 - `server.js` — servidor Node **sem dependências**: serve só `index.html`, `css/`, `js/`; API
   `/api/levels` (GET/POST), `/api/levels/:id`, `/api/events` (SSE). Valida as fases rodando
-  `config.js`/`hazards.js`/`storage.js` num `vm` (mesma normalização do editor). Grava em
-  `data/levels.json`. `npm start` (localhost) ou `npm run start:lan` (rede local).
+  `config.js`/`hazards.js`/`levelcheck.js`/`storage.js` num `vm` (mesma normalização do editor).
+  Grava em `data/levels.json`; com `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` também no
+  Upstash Redis via REST/fetch (`pf:level:<id>` + sorted set `pf:index`) e carrega de lá ao iniciar —
+  necessário no Render grátis (sem disco). Música continua só no disco (some no reset → fase sem som).
+  Nos scripts rodados no `vm`, use `const Math = globalThis.Math` no IIFE (busca global lá é lenta). `npm start` (localhost) ou `npm run start:lan` (rede local).
   Hospedagem: `Dockerfile` + `HOSPEDAR.md`. Env: `PORT` (liga 0.0.0.0), `DATA_DIR` (volume),
   `TRUST_PROXY=1` (IP = último item do X-Forwarded-For), `ADMIN_TOKEN` (DELETE /api/levels/:id,
   evento SSE `removed`). `/healthz` para health check. Limites: 5 publicações/10 min por IP,

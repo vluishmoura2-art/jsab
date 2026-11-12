@@ -2,6 +2,7 @@
 // shapes() devolve formas para desenhar e colidir. Estados: 'warn' (aviso, sem dano),
 // 'active' (causa dano) e 'fx' (efeito visual, sem dano).
 (function () {
+  const Math = globalThis.Math; // local: no vm do servidor a busca global é lenta
   const { W, H, u } = PF;
   const TAU = Math.PI * 2;
   const BALL_WARN = 0.5; // aviso antes de cada bola sair

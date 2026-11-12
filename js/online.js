@@ -333,7 +333,17 @@
       btn.disabled = false;
       return;
     }
-    if (music) msg.textContent = 'Publicando com a música…';
+    // fase impossível não é publicada (o servidor confere de novo)
+    msg.textContent = 'Verificando se a fase é possível…';
+    await new Promise(r => setTimeout(r, 30)); // deixa a mensagem aparecer antes da conta
+    const chk = PF.levelCheck(PF.storage.normalize(JSON.parse(JSON.stringify(myLevel()))));
+    if (!chk.ok) {
+      msg.className = 'text-xs mt-2 text-pf-danger';
+      msg.textContent = `Fase impossível: aos ${PF.u.fmtTime(chk.at)} não sobra nenhum lugar seguro, nem com dash e as ${PF.PLAYER.hp} vidas. Abra um espaço para o jogador e tente de novo.`;
+      btn.disabled = false;
+      return;
+    }
+    msg.textContent = music ? 'Publicando com a música…' : 'Publicando…';
     try {
       const m = await O.publish(myLevel(), author, music);
       msg.className = 'text-xs mt-2 text-pf-accent';

@@ -12,6 +12,24 @@ Depois de hospedado, qualquer pessoa abre `https://seu-endereco` e já entra con
    serverless* (Vercel Functions, Netlify Functions) **não servem**. Use um serviço que roda
    um processo contínuo: Railway, Fly.io, Render (plano com disco), uma VPS etc.
 
+## Sem disco persistente? Use o Upstash Redis (grátis)
+
+No **plano grátis do Render** (e em outras hospedagens sem disco) a pasta do servidor é
+apagada a cada deploy, reinício ou quando o serviço "dorme". Para as fases não sumirem,
+o servidor guarda tudo num Redis do **Upstash**, que tem plano gratuito:
+
+1. Crie uma conta em upstash.com e crie um banco **Redis** (qualquer região perto do Render).
+2. Na página do banco, na parte **REST API**, copie `UPSTASH_REDIS_REST_URL` e
+   `UPSTASH_REDIS_REST_TOKEN`.
+3. No Render, abra o serviço → **Environment** → adicione as duas variáveis com esses valores.
+4. Salve. O Render reinicia o serviço; nos logs deve aparecer `dados em Redis (Upstash)`.
+
+O token é uma senha: nunca coloque ele no código nem no GitHub, só no painel do Render.
+
+**A música das fases não vai para o Redis** (é grande demais para o plano grátis). Ela fica
+no disco do servidor e some no reset; a fase continua lá e passa a tocar sem som.
+Se as variáveis estiverem erradas, o servidor não sobe (para não aparecer vazio): confira os logs.
+
 ## Variáveis de ambiente
 
 | Variável | Valor | Para quê |
@@ -20,6 +38,8 @@ Depois de hospedado, qualquer pessoa abre `https://seu-endereco` e já entra con
 | `DATA_DIR` | caminho do volume, ex. `/data` | onde fica `levels.json` |
 | `TRUST_PROXY` | `1` | usa o IP real do jogador (vem do proxy) no limite de publicações |
 | `ADMIN_TOKEN` | uma senha longa e aleatória | permite apagar fases (moderação) |
+| `UPSTASH_REDIS_REST_URL` | URL REST do banco | guarda as fases no Redis (sem disco persistente) |
+| `UPSTASH_REDIS_REST_TOKEN` | token REST do banco | senha do Redis (só no painel) |
 | `MAX_MUSIC_MB` | padrão `10` | tamanho máximo da música de cada fase |
 | `MUSIC_TOTAL_MB` | padrão `1024` | espaço total para músicas; acima disso tira a música das fases mais antigas |
 
@@ -82,6 +102,8 @@ apague a fase com o comando acima. Num site público, deixe um contato visível 
 ## Limites já embutidos
 
 - Fase de até 300 KB e 2000 perigos; fases vazias são recusadas.
+- Fases impossíveis (sem nenhum jeito de sobreviver até o fim, mesmo com dash e as 3 vidas)
+  são recusadas. A conta tem limite de 2,5 s por publicação; se passar disso, a fase é aceita.
 - Música de até 10 MB por fase e 1 GB no total (ajustáveis pelas variáveis acima).
 - 5 publicações a cada 10 minutos por IP.
 - Até 20 conexões ao vivo por IP e 2000 no total.

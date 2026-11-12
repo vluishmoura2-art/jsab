@@ -54,23 +54,85 @@ function clientIp(req) {
 const sandbox = { console, TextDecoder };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/config.js', 'js/hazards.js', 'js/storage.js', 'js/musiccheck.js']) {
+for (const f of ['js/config.js', 'js/hazards.js', 'js/levelcheck.js', 'js/storage.js', 'js/musiccheck.js']) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox, { filename: f });
 }
 const PF = sandbox.PF;
 
-// ---------- armazenamento (arquivo JSON) ----------
-let levels = [];
-try {
-  levels = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-  if (!Array.isArray(levels)) levels = [];
-} catch (e) { levels = []; }
+// ---------- armazenamento ----------
+// Sempre grava em DATA_DIR/levels.json. Com UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
+// as fases também vão para um Redis (Upstash, REST) e são lidas de lá ao iniciar: assim
+// sobrevivem a resets em hospedagens sem disco persistente (ex.: plano grátis do Render).
+// Cada fase fica em "pf:level:<id>"; o índice "pf:index" (sorted set) guarda a ordem.
+const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const USE_REDIS = !!(REDIS_URL && REDIS_TOKEN);
+const K_INDEX = 'pf:index', kLevel = id => 'pf:level:' + id;
 
-function persist() {
+let levels = [];
+
+function persistFile() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(levels));
   fs.renameSync(tmp, DB_FILE);
+}
+
+// vários comandos Redis numa ida só; lança erro se algum falhar
+async function redis(cmds) {
+  const r = await fetch(REDIS_URL + '/pipeline', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + REDIS_TOKEN, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmds),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error('Redis respondeu ' + r.status);
+  const out = await r.json();
+  for (const x of out) if (x && x.error) throw new Error('Redis: ' + x.error);
+  return out.map(x => x.result);
+}
+
+async function loadLevels() {
+  if (USE_REDIS) {
+    const [ids] = await redis([['ZREVRANGE', K_INDEX, '0', String(MAX_LEVELS - 1)]]);
+    const list = [];
+    for (let i = 0; i < ids.length; i += 50) {
+      const [vals] = await redis([['MGET', ...ids.slice(i, i + 50).map(kLevel)]]);
+      for (const v of vals) { if (v) try { list.push(JSON.parse(v)); } catch (e) { /* ignora */ } }
+    }
+    levels = list;
+    // primeira vez com o banco: leva junto as fases que já estavam no arquivo
+    if (!ids.length) {
+      try {
+        const old = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        if (Array.isArray(old) && old.length) {
+          levels = old.slice(0, MAX_LEVELS);
+          await persist(levels, []);
+          console.log(`[banco] ${levels.length} fase(s) do arquivo copiadas para o Redis`);
+        }
+      } catch (e) { /* sem arquivo */ }
+    }
+  } else {
+    try {
+      levels = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+      if (!Array.isArray(levels)) levels = [];
+    } catch (e) { levels = []; }
+  }
+  // a música fica no disco local: depois de um reset sem disco ela some, e a fase segue sem som
+  for (const l of levels) if (l.music && !fs.existsSync(musicPath(l.id))) l.music = null;
+}
+
+// salva as mudanças: "put" = fases novas/alteradas, "del" = ids removidos
+async function persist(put = [], del = []) {
+  persistFile();
+  if (!USE_REDIS || (!put.length && !del.length)) return;
+  const cmds = [];
+  for (const l of put) {
+    cmds.push(['SET', kLevel(l.id), JSON.stringify(l)]);
+    cmds.push(['ZADD', K_INDEX, String(Date.parse(l.createdAt) || Date.now()), l.id]);
+  }
+  for (const id of del) { cmds.push(['DEL', kLevel(id)]); cmds.push(['ZREM', K_INDEX, id]); }
+  await redis(cmds);
 }
 
 const meta = l => ({
@@ -88,13 +150,16 @@ function dropMusic(entry) {
   entry.music = null;
 }
 
-// mantém no máximo MAX_LEVELS fases e MUSIC_TOTAL de músicas (tira das mais antigas)
+// mantém no máximo MAX_LEVELS fases e MUSIC_TOTAL de músicas (tira das mais antigas).
+// Devolve o que mudou, para salvar: { put: fases que perderam a música, del: ids removidos }
 function enforceLimits() {
-  while (levels.length > MAX_LEVELS) dropMusic(levels.pop());
+  const put = [], del = [];
+  while (levels.length > MAX_LEVELS) { const g = levels.pop(); dropMusic(g); del.push(g.id); }
   let total = levels.reduce((s, l) => s + (l.music ? l.music.size : 0), 0);
   for (let i = levels.length - 1; i >= 0 && total > MUSIC_TOTAL; i--) {
-    if (levels[i].music) { total -= levels[i].music.size; dropMusic(levels[i]); }
+    if (levels[i].music) { total -= levels[i].music.size; dropMusic(levels[i]); put.push(levels[i]); }
   }
+  return { put, del };
 }
 
 // confere pelos primeiros bytes que é mesmo um áudio suportado
@@ -203,6 +268,11 @@ async function publish(req, res) {
   const level = JSON.parse(JSON.stringify(PF.storage.normalize(raw)));
   if (!level.hazards.length) return json(res, 400, { error: 'A fase está vazia: coloque pelo menos um perigo.' });
   level.name = cleanText(level.name, 40, 'Sem nome');
+  // fase impossível (não tem como sobreviver até o fim) não entra
+  const check = PF.levelCheck(level, 2500); // limite de tempo: o servidor não trava
+  if (!check.ok) {
+    return json(res, 400, { error: `Fase impossível: aos ${PF.u.fmtTime(check.at)} não sobra nenhum lugar seguro, nem com dash e as ${PF.PLAYER.hp} vidas.`, impossibleAt: check.at });
+  }
 
   // música (opcional): mesma verificação de direitos autorais do editor, feita de novo aqui
   let music = null;
@@ -230,8 +300,17 @@ async function publish(req, res) {
     fs.writeFileSync(musicPath(entry.id), audio);
   }
   levels.unshift(entry);
-  enforceLimits();
-  persist();
+  const changed = enforceLimits();
+  try {
+    await persist([entry, ...changed.put], changed.del);
+  } catch (err) {
+    // não conseguiu salvar no banco: desfaz, para a fase não sumir no próximo reset sem aviso
+    console.error('[erro ao salvar]', err.message);
+    levels = levels.filter(l => l !== entry);
+    dropMusic(entry);
+    persistFile();
+    return json(res, 503, { error: 'Não consegui salvar a fase agora. Tente de novo em instantes.' });
+  }
   hits.push(now);
   rate.set(ip, hits);
 
@@ -299,7 +378,10 @@ async function api(req, res, p) {
     if (i < 0) return json(res, 404, { error: 'Fase não encontrada.' });
     const [gone] = levels.splice(i, 1);
     dropMusic(gone);
-    persist();
+    try { await persist([], [gone.id]); } catch (err) {
+      console.error('[erro ao apagar no banco]', err.message);
+      return json(res, 503, { error: 'Apagada daqui, mas não do banco. Tente de novo.' });
+    }
     broadcast('removed', { id: gone.id });
     console.log(`[removida] "${gone.name}" por ${gone.author}`);
     return json(res, 200, { ok: true });
@@ -359,9 +441,26 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-server.listen(PORT, HOST, () => {
+// carrega as fases (do Redis, se configurado) antes de abrir a porta
+async function start() {
+  for (let attempt = 1; ; attempt++) {
+    try { await loadLevels(); break; } catch (err) {
+      console.error(`[erro ao carregar as fases do banco] ${err.message} (tentativa ${attempt})`);
+      if (attempt >= 5) {
+        // sem o banco não dá para saber quais fases existem; melhor não subir vazio
+        console.error('Desisti de carregar as fases. Confira UPSTASH_REDIS_REST_URL e UPSTASH_REDIS_REST_TOKEN.');
+        process.exit(1);
+      }
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+  server.listen(PORT, HOST, onListen);
+}
+
+function onListen() {
   console.log(`Pulsefield rodando em http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (${levels.length} fase(s) publicada(s))`);
-  console.log(`  dados em ${DB_FILE}${TRUST_PROXY ? ' · atrás de proxy' : ''}${ADMIN_TOKEN ? ' · admin ativo' : ''}`);
+  console.log(`  dados em ${USE_REDIS ? 'Redis (Upstash) + ' : ''}${DB_FILE}${TRUST_PROXY ? ' · atrás de proxy' : ''}${ADMIN_TOKEN ? ' · admin ativo' : ''}`);
+  if (HOSTED && !USE_REDIS) console.log('  aviso: sem Redis, as fases só ficam salvas se DATA_DIR estiver num disco persistente.');
   if (HOSTED) {
     // hospedado: nada a mais para mostrar
   } else if (LAN) {
@@ -373,4 +472,6 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log('  (só neste computador; use "node server.js --lan" para outras pessoas da rede entrarem)');
   }
-});
+}
+
+start();
