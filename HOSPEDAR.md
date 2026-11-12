@@ -79,7 +79,8 @@ node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"
 1. Coloque o projeto num repositório Git (GitHub, por exemplo). O `.gitignore` já deixa
    a pasta `data/` de fora.
 2. Na hospedagem, crie um serviço a partir do repositório. Ela detecta o `Dockerfile`.
-3. Crie um **volume** e monte em `/data`.
+3. Crie um **volume** e monte em `/data`. **No Render grátis pule este passo**: lá não existe
+   volume, use o Supabase (seção "Sem disco persistente?" acima).
 4. Adicione a variável `ADMIN_TOKEN`.
 5. Configure o *health check* para `/healthz` (se a hospedagem pedir).
 6. Publique. Abra o endereço gerado e confira o **● Online** verde no topo.

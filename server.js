@@ -67,7 +67,16 @@ const PF = sandbox.PF;
 // o bucket privado "music" do Supabase Storage, e tudo é lido de lá: assim nada some nos resets
 // de hospedagens sem disco persistente (ex.: plano grátis do Render). A chave secreta só fica
 // no servidor; a tabela tem RLS ligado e sem políticas, então só ela consegue ler e escrever.
-const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+// aceita a URL completa (https://<id>.supabase.co), sem "https://" ou só o id do projeto
+function supabaseUrl(v) {
+  v = String(v || '').trim().replace(/\/+$/, '');
+  if (!v) return '';
+  if (/^[a-z0-9]{15,40}$/i.test(v)) return `https://${v.toLowerCase()}.supabase.co`; // só o id
+  if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+  try { return new URL(v).origin; } catch (e) { return ''; }
+}
+const SB_URL = supabaseUrl(process.env.SUPABASE_URL);
+if (process.env.SUPABASE_URL && !SB_URL) console.error(`SUPABASE_URL inválida: use https://<id-do-projeto>.supabase.co`);
 const SB_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const USE_SB = !!(SB_URL && SB_KEY);
 const SB_TABLE = 'levels', SB_BUCKET = 'music';
