@@ -11,6 +11,8 @@
 //   DATA_DIR     pasta onde as fases ficam salvas (use um disco/volume persistente)
 //   TRUST_PROXY  "1" quando estiver atrás do proxy da hospedagem (IP real vem do X-Forwarded-For)
 //   ADMIN_TOKEN  senha longa para apagar fases: DELETE /api/levels/:id com "Authorization: Bearer <token>"
+//   SUPABASE_URL + SUPABASE_SECRET_KEY  guardam fases (tabela "levels") e músicas (bucket "music")
+//                no Supabase, para nada sumir em hospedagens sem disco persistente
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -60,14 +62,15 @@ for (const f of ['js/config.js', 'js/hazards.js', 'js/levelcheck.js', 'js/storag
 const PF = sandbox.PF;
 
 // ---------- armazenamento ----------
-// Sempre grava em DATA_DIR/levels.json. Com UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN
-// as fases também vão para um Redis (Upstash, REST) e são lidas de lá ao iniciar: assim
-// sobrevivem a resets em hospedagens sem disco persistente (ex.: plano grátis do Render).
-// Cada fase fica em "pf:level:<id>"; o índice "pf:index" (sorted set) guarda a ordem.
-const REDIS_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/+$/, '');
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-const USE_REDIS = !!(REDIS_URL && REDIS_TOKEN);
-const K_INDEX = 'pf:index', kLevel = id => 'pf:level:' + id;
+// Sempre grava em DATA_DIR/levels.json (e as músicas em DATA_DIR/music). Com SUPABASE_URL +
+// SUPABASE_SECRET_KEY as fases também vão para a tabela "levels" do Supabase e as músicas para
+// o bucket privado "music" do Supabase Storage, e tudo é lido de lá: assim nada some nos resets
+// de hospedagens sem disco persistente (ex.: plano grátis do Render). A chave secreta só fica
+// no servidor; a tabela tem RLS ligado e sem políticas, então só ela consegue ler e escrever.
+const SB_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SB_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const USE_SB = !!(SB_URL && SB_KEY);
+const SB_TABLE = 'levels', SB_BUCKET = 'music';
 
 let levels = [];
 
@@ -78,37 +81,38 @@ function persistFile() {
   fs.renameSync(tmp, DB_FILE);
 }
 
-// vários comandos Redis numa ida só; lança erro se algum falhar
-async function redis(cmds) {
-  const r = await fetch(REDIS_URL + '/pipeline', {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + REDIS_TOKEN, 'Content-Type': 'application/json' },
-    body: JSON.stringify(cmds),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!r.ok) throw new Error('Redis respondeu ' + r.status);
-  const out = await r.json();
-  for (const x of out) if (x && x.error) throw new Error('Redis: ' + x.error);
-  return out.map(x => x.result);
+// chamada à API do Supabase; lança erro com a mensagem dele se falhar
+async function sb(method, p, { body, headers = {}, raw = false } = {}) {
+  const h = { apikey: SB_KEY, ...headers };
+  if (SB_KEY.startsWith('eyJ')) h.Authorization = 'Bearer ' + SB_KEY; // chave antiga (JWT service_role)
+  if (body !== undefined && !Buffer.isBuffer(body)) { h['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
+  const r = await fetch(SB_URL + p, { method, headers: h, body, signal: AbortSignal.timeout(20000) });
+  if (!r.ok) {
+    const t = await r.text().catch(() => '');
+    const e = new Error(`Supabase ${method} ${p.split('?')[0]} → ${r.status} ${t.slice(0, 200)}`);
+    e.status = r.status;
+    throw e;
+  }
+  if (raw) return r;
+  const t = await r.text();
+  return t ? JSON.parse(t) : null;
 }
 
 async function loadLevels() {
-  if (USE_REDIS) {
-    const [ids] = await redis([['ZREVRANGE', K_INDEX, '0', String(MAX_LEVELS - 1)]]);
-    const list = [];
-    for (let i = 0; i < ids.length; i += 50) {
-      const [vals] = await redis([['MGET', ...ids.slice(i, i + 50).map(kLevel)]]);
-      for (const v of vals) { if (v) try { list.push(JSON.parse(v)); } catch (e) { /* ignora */ } }
-    }
-    levels = list;
-    // primeira vez com o banco: leva junto as fases que já estavam no arquivo
-    if (!ids.length) {
+  if (USE_SB) {
+    const rows = await sb('GET', `/rest/v1/${SB_TABLE}?select=entry&order=created_at.desc&limit=${MAX_LEVELS}`);
+    levels = rows.map(r => r.entry).filter(e => e && e.id && e.level);
+    // cria o bucket das músicas se ainda não existir (privado)
+    try { await sb('POST', '/storage/v1/bucket', { body: { id: SB_BUCKET, name: SB_BUCKET, public: false } }); }
+    catch (e) { if (!/already exists|Duplicate|409/i.test(e.message)) console.error('[supabase] bucket:', e.message); }
+    // primeira vez com o banco: leva junto as fases que já estavam no arquivo (sem as músicas)
+    if (!levels.length) {
       try {
         const old = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
         if (Array.isArray(old) && old.length) {
-          levels = old.slice(0, MAX_LEVELS);
+          levels = old.slice(0, MAX_LEVELS).map(l => ({ ...l, music: null }));
           await persist(levels, []);
-          console.log(`[banco] ${levels.length} fase(s) do arquivo copiadas para o Redis`);
+          console.log(`[supabase] ${levels.length} fase(s) do arquivo copiadas para o banco`);
         }
       } catch (e) { /* sem arquivo */ }
     }
@@ -117,22 +121,22 @@ async function loadLevels() {
       levels = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
       if (!Array.isArray(levels)) levels = [];
     } catch (e) { levels = []; }
+    // sem Supabase a música só existe no disco: se ele foi apagado, a fase segue sem som
+    for (const l of levels) if (l.music && !fs.existsSync(musicPath(l.id))) l.music = null;
   }
-  // a música fica no disco local: depois de um reset sem disco ela some, e a fase segue sem som
-  for (const l of levels) if (l.music && !fs.existsSync(musicPath(l.id))) l.music = null;
 }
 
 // salva as mudanças: "put" = fases novas/alteradas, "del" = ids removidos
 async function persist(put = [], del = []) {
   persistFile();
-  if (!USE_REDIS || (!put.length && !del.length)) return;
-  const cmds = [];
-  for (const l of put) {
-    cmds.push(['SET', kLevel(l.id), JSON.stringify(l)]);
-    cmds.push(['ZADD', K_INDEX, String(Date.parse(l.createdAt) || Date.now()), l.id]);
+  if (!USE_SB) return;
+  if (put.length) {
+    await sb('POST', `/rest/v1/${SB_TABLE}?on_conflict=id`, {
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: put.map(l => ({ id: l.id, created_at: l.createdAt, entry: l })),
+    });
   }
-  for (const id of del) { cmds.push(['DEL', kLevel(id)]); cmds.push(['ZREM', K_INDEX, id]); }
-  await redis(cmds);
+  if (del.length) await sb('DELETE', `/rest/v1/${SB_TABLE}?id=in.(${del.join(',')})`);
 }
 
 const meta = l => ({
@@ -141,12 +145,35 @@ const meta = l => ({
   hasMusic: !!l.music, musicName: l.music ? l.music.name : '',
 });
 
-// ---------- músicas das fases (arquivos em data/music) ----------
+// ---------- músicas das fases (disco local + Supabase Storage) ----------
 const musicPath = id => path.join(MUSIC_DIR, id + '.bin');
+const sbMusic = id => `/storage/v1/object/${SB_BUCKET}/${id}.bin`;
+
+async function saveMusic(id, audio, type) {
+  fs.mkdirSync(MUSIC_DIR, { recursive: true });
+  fs.writeFileSync(musicPath(id), audio);
+  if (USE_SB) await sb('POST', sbMusic(id), { body: audio, headers: { 'Content-Type': type, 'x-upsert': 'true' } });
+}
+
+// devolve o caminho local da música, baixando do Supabase se o disco foi apagado
+async function localMusic(id) {
+  const p = musicPath(id);
+  if (fs.existsSync(p)) return p;
+  if (!USE_SB) return null;
+  const r = await sb('GET', sbMusic(id), { raw: true });
+  const buf = Buffer.from(await r.arrayBuffer());
+  fs.mkdirSync(MUSIC_DIR, { recursive: true });
+  fs.writeFileSync(p, buf);
+  return p;
+}
 
 function dropMusic(entry) {
   if (!entry || !entry.music) return;
   try { fs.unlinkSync(musicPath(entry.id)); } catch (e) { /* já não existe */ }
+  if (USE_SB) {
+    sb('DELETE', `/storage/v1/object/${SB_BUCKET}`, { body: { prefixes: [entry.id + '.bin'] } })
+      .catch(e => console.error('[supabase] apagar música:', e.message));
+  }
   entry.music = null;
 }
 
@@ -295,9 +322,12 @@ async function publish(req, res) {
     level,
     music,
   };
-  if (music) {
-    fs.mkdirSync(MUSIC_DIR, { recursive: true });
-    fs.writeFileSync(musicPath(entry.id), audio);
+  try {
+    if (music) await saveMusic(entry.id, audio, music.type);
+  } catch (err) {
+    console.error('[erro ao salvar a música]', err.message);
+    dropMusic(entry);
+    return json(res, 503, { error: 'Não consegui salvar a música agora. Tente de novo em instantes (ou publique sem música).' });
   }
   levels.unshift(entry);
   const changed = enforceLimits();
@@ -353,7 +383,13 @@ async function api(req, res, p) {
   if (mm && req.method === 'GET') {
     const l = levels.find(x => x.id === mm[1]);
     if (!l || !l.music) return json(res, 404, { error: 'Esta fase não tem música.' });
-    const stream = fs.createReadStream(musicPath(l.id));
+    let file;
+    try { file = await localMusic(l.id); } catch (err) {
+      console.error('[erro ao baixar a música]', err.message);
+      return json(res, err.status === 404 || err.status === 400 ? 404 : 503, { error: 'Música indisponível agora.' });
+    }
+    if (!file) return json(res, 404, { error: 'Música não encontrada.' });
+    const stream = fs.createReadStream(file);
     stream.on('error', () => { if (!res.headersSent) json(res, 404, { error: 'Música não encontrada.' }); else res.destroy(); });
     stream.on('open', () => {
       res.writeHead(200, {
@@ -441,14 +477,14 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// carrega as fases (do Redis, se configurado) antes de abrir a porta
+// carrega as fases (do Supabase, se configurado) antes de abrir a porta
 async function start() {
   for (let attempt = 1; ; attempt++) {
     try { await loadLevels(); break; } catch (err) {
       console.error(`[erro ao carregar as fases do banco] ${err.message} (tentativa ${attempt})`);
       if (attempt >= 5) {
         // sem o banco não dá para saber quais fases existem; melhor não subir vazio
-        console.error('Desisti de carregar as fases. Confira UPSTASH_REDIS_REST_URL e UPSTASH_REDIS_REST_TOKEN.');
+        console.error('Desisti de carregar as fases. Confira SUPABASE_URL, SUPABASE_SECRET_KEY e se a tabela "levels" foi criada (HOSPEDAR.md).');
         process.exit(1);
       }
       await new Promise(r => setTimeout(r, 2000 * attempt));
@@ -459,8 +495,8 @@ async function start() {
 
 function onListen() {
   console.log(`Pulsefield rodando em http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (${levels.length} fase(s) publicada(s))`);
-  console.log(`  dados em ${USE_REDIS ? 'Redis (Upstash) + ' : ''}${DB_FILE}${TRUST_PROXY ? ' · atrás de proxy' : ''}${ADMIN_TOKEN ? ' · admin ativo' : ''}`);
-  if (HOSTED && !USE_REDIS) console.log('  aviso: sem Redis, as fases só ficam salvas se DATA_DIR estiver num disco persistente.');
+  console.log(`  dados em ${USE_SB ? 'Supabase + ' : ''}${DB_FILE}${TRUST_PROXY ? ' · atrás de proxy' : ''}${ADMIN_TOKEN ? ' · admin ativo' : ''}`);
+  if (HOSTED && !USE_SB) console.log('  aviso: sem Supabase, as fases só ficam salvas se DATA_DIR estiver num disco persistente.');
   if (HOSTED) {
     // hospedado: nada a mais para mostrar
   } else if (LAN) {

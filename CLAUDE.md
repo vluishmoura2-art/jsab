@@ -43,9 +43,10 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 - `server.js` — servidor Node **sem dependências**: serve só `index.html`, `css/`, `js/`; API
   `/api/levels` (GET/POST), `/api/levels/:id`, `/api/events` (SSE). Valida as fases rodando
   `config.js`/`hazards.js`/`levelcheck.js`/`storage.js` num `vm` (mesma normalização do editor).
-  Grava em `data/levels.json`; com `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` também no
-  Upstash Redis via REST/fetch (`pf:level:<id>` + sorted set `pf:index`) e carrega de lá ao iniciar —
-  necessário no Render grátis (sem disco). Música continua só no disco (some no reset → fase sem som).
+  Grava em `data/levels.json`; com `SUPABASE_URL` + `SUPABASE_SECRET_KEY` também no Supabase via
+  REST/fetch (tabela `levels(id, created_at, entry jsonb)` com RLS sem políticas; músicas no bucket
+  privado `music`, baixadas para o disco sob demanda) e carrega de lá ao iniciar — necessário no
+  Render grátis (sem disco). Chave secreta vai só no header `apikey` (Bearer só se for JWT antigo).
   Nos scripts rodados no `vm`, use `const Math = globalThis.Math` no IIFE (busca global lá é lenta). `npm start` (localhost) ou `npm run start:lan` (rede local).
   Hospedagem: `Dockerfile` + `HOSPEDAR.md`. Env: `PORT` (liga 0.0.0.0), `DATA_DIR` (volume),
   `TRUST_PROXY=1` (IP = último item do X-Forwarded-For), `ADMIN_TOKEN` (DELETE /api/levels/:id,

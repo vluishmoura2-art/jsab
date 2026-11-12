@@ -12,23 +12,43 @@ Depois de hospedado, qualquer pessoa abre `https://seu-endereco` e já entra con
    serverless* (Vercel Functions, Netlify Functions) **não servem**. Use um serviço que roda
    um processo contínuo: Railway, Fly.io, Render (plano com disco), uma VPS etc.
 
-## Sem disco persistente? Use o Upstash Redis (grátis)
+## Sem disco persistente? Use o Supabase (grátis)
 
 No **plano grátis do Render** (e em outras hospedagens sem disco) a pasta do servidor é
-apagada a cada deploy, reinício ou quando o serviço "dorme". Para as fases não sumirem,
-o servidor guarda tudo num Redis do **Upstash**, que tem plano gratuito:
+apagada a cada deploy, reinício ou quando o serviço "dorme". Para nada sumir, o servidor
+guarda as fases numa tabela do **Supabase** e as músicas no **Supabase Storage**:
 
-1. Crie uma conta em upstash.com e crie um banco **Redis** (qualquer região perto do Render).
-2. Na página do banco, na parte **REST API**, copie `UPSTASH_REDIS_REST_URL` e
-   `UPSTASH_REDIS_REST_TOKEN`.
-3. No Render, abra o serviço → **Environment** → adicione as duas variáveis com esses valores.
-4. Salve. O Render reinicia o serviço; nos logs deve aparecer `dados em Redis (Upstash)`.
+1. Crie uma conta em supabase.com e crie um projeto (região perto da do Render).
+2. No projeto, abra **SQL Editor**, cole e rode:
 
-O token é uma senha: nunca coloque ele no código nem no GitHub, só no painel do Render.
+   ```sql
+   create table if not exists public.levels (
+     id text primary key,
+     created_at timestamptz not null,
+     entry jsonb not null
+   );
+   alter table public.levels enable row level security;
+   ```
 
-**A música das fases não vai para o Redis** (é grande demais para o plano grátis). Ela fica
-no disco do servidor e some no reset; a fase continua lá e passa a tocar sem som.
-Se as variáveis estiverem erradas, o servidor não sobe (para não aparecer vazio): confira os logs.
+   O RLS ligado e sem nenhuma política faz a tabela ficar fechada para o público: só o
+   servidor, com a chave secreta, lê e escreve.
+3. Em **Project Settings → API Keys**, copie a **Secret key** (`sb_secret_…`). Se o projeto só
+   mostrar as chaves antigas, use a `service_role`. A URL do projeto
+   (`https://<id>.supabase.co`) fica em **Project Settings → Data API**.
+4. No Render, abra o serviço → **Environment** → adicione:
+   - `SUPABASE_URL` = a URL do projeto
+   - `SUPABASE_SECRET_KEY` = a Secret key
+   - `MUSIC_TOTAL_MB` = `900` (o Storage grátis tem 1 GB; acima disso o servidor tira a música
+     das fases mais antigas)
+5. Salve. O Render reinicia o serviço; nos logs deve aparecer `dados em Supabase`.
+   O bucket `music` (privado) é criado sozinho na primeira vez.
+
+A Secret key dá acesso total ao projeto: nunca coloque ela no código, no GitHub nem no
+editor (navegador), só no painel do Render.
+
+Se as variáveis estiverem erradas ou a tabela não existir, o servidor não sobe (para não
+aparecer vazio): confira os logs. No plano grátis o Supabase pausa projetos sem uso por
+cerca de uma semana; aí é só entrar no painel e reativar.
 
 ## Variáveis de ambiente
 
@@ -38,8 +58,8 @@ Se as variáveis estiverem erradas, o servidor não sobe (para não aparecer vaz
 | `DATA_DIR` | caminho do volume, ex. `/data` | onde fica `levels.json` |
 | `TRUST_PROXY` | `1` | usa o IP real do jogador (vem do proxy) no limite de publicações |
 | `ADMIN_TOKEN` | uma senha longa e aleatória | permite apagar fases (moderação) |
-| `UPSTASH_REDIS_REST_URL` | URL REST do banco | guarda as fases no Redis (sem disco persistente) |
-| `UPSTASH_REDIS_REST_TOKEN` | token REST do banco | senha do Redis (só no painel) |
+| `SUPABASE_URL` | `https://<id>.supabase.co` | guarda fases e músicas no Supabase (sem disco persistente) |
+| `SUPABASE_SECRET_KEY` | Secret key (`sb_secret_…`) ou `service_role` | senha do Supabase (só no painel) |
 | `MAX_MUSIC_MB` | padrão `10` | tamanho máximo da música de cada fase |
 | `MUSIC_TOTAL_MB` | padrão `1024` | espaço total para músicas; acima disso tira a música das fases mais antigas |
 
