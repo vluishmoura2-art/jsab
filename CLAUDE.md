@@ -19,7 +19,7 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 - `js/config.js` — constantes, paleta, utilitários (`PF.u`)
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).
   Cada perigo é uma função pura do tempo: `shapes(h, tempoLocal, out)` gera formas
-  `circle | ring | line | rect` com estado `warn | active | fx`. Só `active` causa dano.
+  `circle | ring | line | rect | poly` com estado `warn | active | fx`. Só `active` causa dano.
 - `js/levelcheck.js` — `PF.levelCheck(level, budgetMs)`: verifica se a fase é possível simulando
   numa grade 16px todos os lugares alcançáveis (andar, dash invencível, 3 vidas + invencibilidade
   após dano). Generosa: só acusa impossível de verdade. Usada antes de publicar e no servidor
@@ -88,7 +88,8 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   cheios/ocos intercalados; modo Centro largura×altura, Vertical ou Horizontal na tela toda;
   aviso que se estende, entrada/saída em onda, pulso e fluxo ao longo da faixa), Água (só embaixo; colunas arredondadas com ondas;
   altura vai da inicial à final ao longo do bloco, sobe e escoa; arrastar no mapa muda a altura), Roda (anel de alvos que gira e anda numa direção fixa —
-  dir./tamanho do arco/qtd./tamanho/velocidade/giro). Timeline, painel, desfazer, modo teste.
+  dir./tamanho do arco/qtd./tamanho/velocidade/giro), Plataforma pontuda (barra com espinhos na
+  frente, 4 direções, altura e velocidade; nasce devagar tremendo e acelera em 0,9 s; forma `poly`). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;

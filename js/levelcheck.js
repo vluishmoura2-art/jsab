@@ -39,6 +39,14 @@
     if (s.kind === 'circle') return [s.x - s.r, s.y - s.r, s.x + s.r, s.y + s.r];
     if (s.kind === 'ring') { const e = s.r + s.w / 2; return [s.x - e, s.y - e, s.x + e, s.y + e]; }
     if (s.kind === 'line') { const e = s.w / 2; return [Math.min(s.x1, s.x2) - e, Math.min(s.y1, s.y2) - e, Math.max(s.x1, s.x2) + e, Math.max(s.y1, s.y2) + e]; }
+    if (s.kind === 'poly') {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let i = 0; i < s.pts.length; i += 2) {
+        const x = s.pts[i], y = s.pts[i + 1];
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      return [x0, y0, x1, y1];
+    }
     if (s.kind === 'rect') {
       const ex = s.rot ? Math.hypot(s.w, s.h) / 2 : s.w / 2, ey = s.rot ? ex : s.h / 2;
       return [s.x - ex, s.y - ey, s.x + ex, s.y + ey];

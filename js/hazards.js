@@ -475,6 +475,65 @@
     hit: (h, x, y, tol) => Math.abs(Math.hypot(x - h.x, y - h.y) - h.radius) <= h.size + tol || Math.hypot(x - h.x, y - h.y) <= tol * 2,
   };
 
+  // Plataforma pontuda: barra com espinhos na frente. Nasce devagar e acelera até a velocidade.
+  const SPK_T = 70, SPK_S = 30, SPK_RAMP = 0.9, SPK_CREEP = 30;
+  function spikeDist(h, t) {
+    if (t <= 0) return 0;
+    const v0 = Math.min(SPK_CREEP, h.speed), R = SPK_RAMP;
+    if (t < R) return v0 * t + (h.speed - v0) * t * t * t / (3 * R * R);
+    return v0 * R + (h.speed - v0) * R / 3 + h.speed * (t - R);
+  }
+  function spikeRun(h) { return Math.max(0, [W - h.x, h.x, H - h.y, h.y][h.dir] + SPK_T / 2 + 6); }
+  // pontos do polígono (x, y, x, y…) com o centro da barra em (cx, cy)
+  function spikePts(h, cx, cy) {
+    const [dx, dy] = WHEEL_DIRS[h.dir] || WHEEL_DIRS[1];
+    const sx = -dy, sy = dx, L = h.height, back = -SPK_T / 2, front = SPK_T / 2, r = SPK_T * 0.4;
+    const n = Math.max(1, Math.round(L / (SPK_S * 1.15))), w = L / n;
+    const loc = [[front, -L / 2]];
+    for (let i = 0; i < n; i++) loc.push([front + SPK_S, -L / 2 + (i + 0.5) * w], [front, -L / 2 + (i + 1) * w]);
+    for (let k = 0; k <= 4; k++) { const a = Math.PI / 2 + Math.PI / 2 * k / 4; loc.push([back + r + r * Math.cos(a), L / 2 - r + r * Math.sin(a)]); }
+    for (let k = 0; k <= 4; k++) { const a = Math.PI + Math.PI / 2 * k / 4; loc.push([back + r + r * Math.cos(a), -L / 2 + r + r * Math.sin(a)]); }
+    const pts = [];
+    for (const [f, s] of loc) pts.push(cx + dx * f + sx * s, cy + dy * f + sy * s);
+    return pts;
+  }
+
+  PF.HAZARDS.spike = {
+    label: 'Plataforma pontuda',
+    desc: 'Uma barra com espinhos na frente que atravessa a tela numa direção (direita, esquerda, baixo ou cima). Ela nasce devagar, tremendo, e depois dispara até a velocidade escolhida.',
+    defaults: { dir: 1, height: 320, speed: 900 },
+    props: [
+      { key: 'dir', label: 'Direção', type: 'select', options: [[0, 'Direita →'], [1, '← Esquerda'], [2, 'Baixo ↓'], [3, 'Cima ↑']] },
+      { key: 'height', label: 'Altura', min: 40, max: 1440, step: 5, unit: 'px' },
+      { key: 'speed', label: 'Velocidade', min: 50, max: 3000, step: 10, unit: 'px/s' },
+    ],
+    lead: () => BALL_WARN,
+    warnLen: () => 0,
+    length(h) {
+      const run = spikeRun(h);
+      if (run <= spikeDist(h, SPK_RAMP)) { // ainda acelerando: procura o tempo
+        let a = 0, b = SPK_RAMP;
+        for (let i = 0; i < 30; i++) { const m = (a + b) / 2; if (spikeDist(h, m) < run) a = m; else b = m; }
+        return b;
+      }
+      return SPK_RAMP + (run - spikeDist(h, SPK_RAMP)) / h.speed;
+    },
+    shapes(h, lt, out) {
+      const [dx, dy] = WHEEL_DIRS[h.dir] || WHEEL_DIRS[1];
+      if (lt < 0) {
+        out.push({ kind: 'poly', pts: spikePts(h, h.x, h.y), state: 'warn', alpha: 0.1 + 0.35 * (1 + lt / BALL_WARN) });
+        return;
+      }
+      const d = spikeDist(h, lt);
+      // treme enquanto ganha velocidade
+      const shake = lt < SPK_RAMP ? (1 - lt / SPK_RAMP) : 0;
+      const jf = Math.sin(lt * 53) * 2.5 * shake, js = Math.sin(lt * 71) * 2 * shake;
+      const cx = h.x + dx * (d + jf) - dy * js, cy = h.y + dy * (d + jf) + dx * js;
+      out.push({ kind: 'poly', pts: spikePts(h, cx, cy), state: 'active', alpha: lt < 0.12 ? 0.6 + 0.4 * lt / 0.12 : 1 });
+    },
+    hit(h, x, y, tol) { return PF.hz.hitsPlayer({ kind: 'poly', pts: spikePts(h, h.x, h.y), state: 'active' }, x, y, tol); },
+  };
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
@@ -501,6 +560,7 @@
   PF.hz = {
     lineEnds,
     doubleBox,
+    spikePts,
     create(type, x, y, time) {
       const h = { id: seq++, type, time, x, y, ...JSON.parse(JSON.stringify(PF.HAZARDS[type].defaults)) };
       if (PF.HAZARDS[type].init) PF.HAZARDS[type].init(h);
@@ -530,6 +590,17 @@
         if (s.rot) { const c = Math.cos(-s.rot), n = Math.sin(-s.rot); [lx, ly] = [lx * c - ly * n, lx * n + ly * c]; }
         const dx = Math.max(0, Math.abs(lx) - s.w / 2), dy = Math.max(0, Math.abs(ly) - s.h / 2);
         return dx * dx + dy * dy < pr * pr;
+      }
+      if (s.kind === 'poly') {
+        // dentro do polígono, ou a menos de "pr" de alguma borda
+        const p = s.pts, n = p.length / 2;
+        let inside = false;
+        for (let i = 0, j = n - 1; i < n; j = i++) {
+          const xi = p[i * 2], yi = p[i * 2 + 1], xj = p[j * 2], yj = p[j * 2 + 1];
+          if ((yi > py) !== (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside;
+          if (u.distToSeg(px, py, xi, yi, xj, yj) < pr) return true;
+        }
+        return inside;
       }
       return false;
     },

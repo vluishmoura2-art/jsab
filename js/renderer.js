@@ -46,6 +46,19 @@
         ctx.arc(s.x, s.y, s.r - s.w / 2, 0, TAU);
         ctx.fill();
       }
+    } else if (s.kind === 'poly') {
+      const p = s.pts;
+      ctx.beginPath();
+      ctx.moveTo(p[0], p[1]);
+      for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+      ctx.closePath();
+      ctx.fill();
+      if (s.state === 'warn') {
+        ctx.globalAlpha = Math.min(1, s.alpha * 2);
+        ctx.setLineDash([6, 6]);
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     } else if (s.kind === 'rect') {
       if (s.rot) { ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.translate(-s.x, -s.y); }
       if (s.noGlow) ctx.shadowBlur = 0;
@@ -167,6 +180,21 @@
         ctx.globalAlpha *= 0.5;
         ctx.stroke();
         ctx.globalAlpha /= 0.5;
+      } else if (h.type === 'spike') {
+        const p = PF.hz.spikePts(h, h.x, h.y);
+        ctx.moveTo(p[0], p[1]);
+        for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+        ctx.closePath();
+        ctx.stroke();
+        // seta na direção do movimento, saindo da ponta dos espinhos
+        const [dx, dy] = [[1, 0], [-1, 0], [0, 1], [0, -1]][h.dir] || [-1, 0];
+        const r0 = 35 + 30 + 10, r1 = r0 + 40;
+        const ax = h.x + dx * r1, ay = h.y + dy * r1, px = -dy, py = dx;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(h.x + dx * r0, h.y + dy * r0); ctx.lineTo(ax, ay);
+        ctx.moveTo(ax - dx * 8 + px * 6, ay - dy * 8 + py * 6); ctx.lineTo(ax, ay); ctx.lineTo(ax - dx * 8 - px * 6, ay - dy * 8 - py * 6);
+        ctx.stroke();
       } else if (h.type === 'wheel') {
         ctx.arc(h.x, h.y, h.radius, 0, TAU);
         ctx.stroke();
