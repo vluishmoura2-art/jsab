@@ -221,6 +221,7 @@
     water: '<path d="M3 21V13c2 0 2.5-2 4.5-2s2.5 2 4.5 2 2.5-2 4.5-2 2.5 2 4.5 2v8z" fill="currentColor"/><path d="M8 7c1.5-1 3-1 4.5 0M12 4c1.5-1 3-1 4.5 0" stroke-linecap="round"/>',
     wheel: '<circle cx="12" cy="4.5" r="2.3"/><circle cx="19.5" cy="12" r="2.3"/><circle cx="12" cy="19.5" r="2.3"/><circle cx="4.5" cy="12" r="2.3"/><circle cx="17.3" cy="6.7" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="6.7" r="1.6" fill="currentColor" stroke="none"/>',
     spike: '<path d="M10 3h8a2.5 2.5 0 0 1 2.5 2.5V21H10l-4-2 4-2-4-2 4-2-4-2 4-2-4-2 4-2-4-2z" fill="currentColor"/>',
+    curve: '<rect x="13.5" y="2.5" width="6" height="6" transform="rotate(20 16.5 5.5)" fill="currentColor"/><rect x="8" y="10" width="4.5" height="4.5" transform="rotate(40 10.25 12.25)" fill="currentColor" stroke="none"/><rect x="3.5" y="17" width="3.2" height="3.2" transform="rotate(55 5.1 18.6)" fill="currentColor" stroke="none"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
   const TOOLS = [
@@ -235,6 +236,7 @@
     { id: 'water', label: 'Água', key: '8' },
     { id: 'wheel', label: 'Roda', key: '9' },
     { id: 'spike', label: 'Pontuda', key: '0' },
+    { id: 'curve', label: 'Curvo', key: 'C' },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
@@ -617,6 +619,7 @@
       case '8': setTool('water'); break;
       case '9': setTool('wheel'); break;
       case '0': setTool('spike'); break;
+      case 'c': setTool('curve'); break;
       case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'home': pause(); app.setTime(0); PF.timeline.scroll = 0; break;

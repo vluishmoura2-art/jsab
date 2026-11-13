@@ -77,7 +77,7 @@
         ctx.fillStyle = '#FFD3DA';
         ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       }
-      if (s.state === 'warn') {
+      if (s.state === 'warn' && !s.solid) {
         ctx.globalAlpha = Math.min(1, s.alpha * 2);
         ctx.setLineDash([6, 6]);
         ctx.lineWidth = 2;
@@ -169,6 +169,30 @@
         ctx.beginPath();
         ctx.moveTo(x0, h.y); ctx.lineTo(x1, h.y);
         ctx.moveTo(x1 - d * 8, h.y - 6); ctx.lineTo(x1, h.y); ctx.lineTo(x1 - d * 8, h.y + 6);
+        ctx.stroke();
+      } else if (h.type === 'curve') {
+        // quadrado de partida e o caminho inteiro da cabeça
+        ctx.save();
+        ctx.translate(h.x, h.y);
+        ctx.rotate(h.angle * Math.PI / 180);
+        ctx.strokeRect(-h.size / 2, -h.size / 2, h.size, h.size);
+        ctx.restore();
+        const run = PF.hz.curveRun(h);
+        ctx.globalAlpha *= 0.5;
+        ctx.beginPath();
+        for (let s = 0; s <= run; s += 12) {
+          const [x, y] = PF.hz.curvePos(h, s);
+          if (s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.globalAlpha /= 0.5;
+        // seta na direção inicial
+        const a = h.angle * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a), px = -dy, py = dx;
+        const r0 = h.size / 2 + 6, r1 = r0 + 40, ax = h.x + dx * r1, ay = h.y + dy * r1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(h.x + dx * r0, h.y + dy * r0); ctx.lineTo(ax, ay);
+        ctx.moveTo(ax - dx * 8 + px * 6, ay - dy * 8 + py * 6); ctx.lineTo(ax, ay); ctx.lineTo(ax - dx * 8 - px * 6, ay - dy * 8 - py * 6);
         ctx.stroke();
       } else if (h.type === 'double') {
         const b = PF.hz.doubleBox(h);

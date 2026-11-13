@@ -89,7 +89,9 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   aviso que se estende, entrada/saída em onda, pulso e fluxo ao longo da faixa), Água (só embaixo; colunas arredondadas com ondas;
   altura vai da inicial à final ao longo do bloco, sobe e escoa; arrastar no mapa muda a altura), Roda (anel de alvos que gira e anda numa direção fixa —
   dir./tamanho do arco/qtd./tamanho/velocidade/giro), Plataforma pontuda (barra com espinhos na
-  frente, 4 direções, altura e velocidade; nasce devagar tremendo e acelera em 0,9 s; forma `poly`). Timeline, painel, desfazer, modo teste.
+  frente, 4 direções, altura e velocidade; nasce devagar tremendo e acelera em 0,9 s; forma `poly`), Rastro curvo (tecla C; como o Rastro, mas
+  anda num arco: direção inicial em graus e curva em °/100 px; quadrados giram com o caminho; o caminho
+  à frente aparece em aviso; a cabeça para ao sair da tela ou depois de duas voltas). Timeline, painel, desfazer, modo teste.
   Jogador com 3 vidas e ponto de início; música importada com verificação de copyright.
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;

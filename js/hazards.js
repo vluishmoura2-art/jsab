@@ -534,6 +534,92 @@
     hit(h, x, y, tol) { return PF.hz.hitsPlayer({ kind: 'poly', pts: spikePts(h, h.x, h.y), state: 'active' }, x, y, tol); },
   };
 
+  // Rastro curvo: igual ao rastro, mas a cabeça anda num arco de círculo (vira sempre o mesmo
+  // tanto a cada 100 px). Na frente da cabeça aparece o caminho em aviso.
+  const CRV_PREVIEW = 0.6, CRV_STEP = 6;
+  const crvK = h => h.curve * Math.PI / 180 / 100; // radianos por px
+  // ponto e ângulo do caminho depois de andar "s" px
+  function curvePos(h, s) {
+    const a0 = h.angle * Math.PI / 180, k = crvK(h);
+    if (Math.abs(k) < 1e-7) return [h.x + Math.cos(a0) * s, h.y + Math.sin(a0) * s, a0];
+    const a = a0 + k * s;
+    return [h.x + (Math.sin(a) - Math.sin(a0)) / k, h.y + (Math.cos(a0) - Math.cos(a)) / k, a];
+  }
+  const curveGap = h => h.size * 1.12;
+  const curveLife = h => h.tail * curveGap(h) / h.speed;
+  // até onde a cabeça anda: até sair da tela pela primeira vez (no máximo duas voltas)
+  const crvCache = new Map();
+  function curveRun(h) {
+    const key = h.x + ',' + h.y + ',' + h.angle + ',' + h.curve + ',' + h.size;
+    let run = crvCache.get(key);
+    if (run !== undefined) return run;
+    const k = Math.abs(crvK(h));
+    const max = k > 1e-7 ? Math.min(12000, 4 * Math.PI / k) : 12000, r = h.size * 0.8;
+    let seen = false; // pode nascer fora da tela: conta a partir de quando entra
+    run = 0;
+    for (let s = 0; s <= max; s += CRV_STEP) {
+      const [x, y] = curvePos(h, s);
+      if (!off(x, y, r)) { seen = true; run = s; } else if (seen) break;
+    }
+    run = seen ? Math.min(max, run + h.size) : 0;
+    if (crvCache.size > 600) crvCache.clear();
+    crvCache.set(key, run);
+    return run;
+  }
+
+  PF.HAZARDS.curve = {
+    label: 'Rastro curvo',
+    desc: 'Um quadrado que corre fazendo uma curva e solta quadrados de luz pelo caminho, que ficam parados e encolhem até sumir. Na frente dele aparece o caminho que ele vai fazer (aviso, sem dano). Curva positiva vira para a direita de quem anda; negativa, para a esquerda.',
+    defaults: { angle: -90, curve: 10, size: 22, speed: 480, tail: 22 },
+    props: [
+      { key: 'angle', label: 'Direção inicial (0 = →, −90 = ↑)', min: -180, max: 180, step: 1, unit: '°' },
+      { key: 'curve', label: 'Curva (0 = reta)', min: -90, max: 90, step: 1, unit: '°/100px' },
+      { key: 'size', label: 'Tamanho', min: 4, max: 120, step: 1, unit: 'px' },
+      { key: 'speed', label: 'Velocidade', min: 20, max: 2000, step: 10, unit: 'px/s' },
+      { key: 'tail', label: 'Quadrados atrás', min: 0, max: 60, step: 1 },
+    ],
+    lead: () => BALL_WARN,
+    warnLen: () => 0,
+    length: h => curveRun(h) / h.speed + curveLife(h),
+    shapes(h, lt, out) {
+      const gap = curveGap(h), life = curveLife(h), run = curveRun(h), sz = h.size;
+      const head = Math.min(h.speed * Math.max(0, lt), run);
+      // caminho à frente da cabeça, nos mesmos lugares onde os quadrados vão cair
+      const ahead = h.speed * CRV_PREVIEW * (lt < 0 ? 1 + lt / BALL_WARN : 1);
+      const kHead = lt < 0 ? 0 : Math.floor(head / gap);
+      const kEnd = Math.floor(Math.min(run, head + ahead) / gap);
+      for (let k = kEnd; k > kHead; k--) {
+        const [x, y, a] = curvePos(h, k * gap);
+        const f = 1 - (k * gap - head) / Math.max(1, ahead); // mais forte perto da cabeça
+        out.push({ kind: 'rect', x, y, w: sz * 0.8, h: sz * 0.8, rot: a, state: 'warn', alpha: 0.12 + 0.3 * f, solid: true, noGlow: true });
+      }
+      if (lt < 0) {
+        out.push({ kind: 'rect', x: h.x, y: h.y, w: sz, h: sz, rot: h.angle * Math.PI / 180, state: 'warn', alpha: 0.1 + 0.35 * (1 + lt / BALL_WARN) });
+        return;
+      }
+      const kMin = Math.max(1, Math.ceil((h.speed * (lt - life)) / gap));
+      for (let k = kMin; k <= kHead; k++) {
+        const age = lt - k * gap / h.speed;
+        const p = age / life;
+        if (p < 0 || p >= 1) continue;
+        let s, al = 0.9;
+        if (age < 0.09) s = 1.3 - 0.3 * (age / 0.09);
+        else if (p < 0.55) s = 1;
+        else s = 1 - 0.8 * ((p - 0.55) / 0.45);
+        if (p > 0.8) al = 0.9 * (1 - (p - 0.8) / 0.2) + 0.15;
+        const [x, y, a] = curvePos(h, k * gap);
+        if (off(x, y, sz * s)) continue;
+        out.push({ kind: 'rect', x, y, w: sz * s, h: sz * s, rot: a, state: s < 0.3 ? 'fx' : 'active', alpha: al, flash: age < 0.09 ? 1 - age / 0.09 : 0 });
+      }
+      if (h.speed * lt <= run) {
+        const m = 1.12 * (1 + 0.07 * Math.sin(TAU * 7 * lt));
+        const [x, y, a] = curvePos(h, head);
+        if (!off(x, y, sz * m)) out.push({ kind: 'rect', x, y, w: sz * m, h: sz * m, rot: a, state: 'active', alpha: 1, head: true });
+      }
+    },
+    hit: (h, x, y, tol) => Math.hypot(x - h.x, y - h.y) <= Math.max(h.size * 0.75, tol),
+  };
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
@@ -561,6 +647,8 @@
     lineEnds,
     doubleBox,
     spikePts,
+    curvePos,
+    curveRun,
     create(type, x, y, time) {
       const h = { id: seq++, type, time, x, y, ...JSON.parse(JSON.stringify(PF.HAZARDS[type].defaults)) };
       if (PF.HAZARDS[type].init) PF.HAZARDS[type].init(h);
