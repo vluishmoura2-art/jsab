@@ -104,7 +104,7 @@
     const t = app.t;
     const lw = 1.5 / scale, dash = [5 / scale, 4 / scale];
     for (const h of app.level.hazards) {
-      const sel = h.id === app.selectedId;
+      const sel = app.isSelected(h.id), single = sel && !app.multi.size; // alças só com um selecionado
       const [a, b] = PF.hz.window(h);
       const inWin = t >= a && t <= b;
       ctx.save();
@@ -252,7 +252,11 @@
           ctx.stroke();
         }
       } else if (h.type === 'shape') {
-        shapeGizmo(ctx, h, sel, scale);
+        shapeGizmo(ctx, h, single, scale);
+        ctx.restore();
+        continue;
+      } else if (h.type === 'group') {
+        groupGizmo(ctx, h, single, scale);
         ctx.restore();
         continue;
       } else if (h.type === 'thunder') {
@@ -327,6 +331,55 @@
     ctx.moveTo(ex + r, ey - r); ctx.lineTo(ex - r, ey + r);
     ctx.stroke();
     ctx.restore();
+  }
+
+  // Grupo: alça de giro acima do pivô coletivo (gira junto com o grupo)
+  PF.groupHandles = function (g, scale) {
+    const a = g.rot * Math.PI / 180, r = 46 / scale;
+    return { rot: [g.x + Math.sin(a) * r, g.y - Math.cos(a) * r] };
+  };
+
+  // contornos dos itens (1ª cópia forte, as outras do repetidor fracas), pivô e alça de giro
+  function groupGizmo(ctx, g, sel, scale) {
+    const outl = PF.hz.groupOutlines(g);
+    for (const o of outl) {
+      ctx.save();
+      if (o.copy) ctx.globalAlpha *= 0.35;
+      ctx.beginPath();
+      for (let i = 0; i < o.pts.length; i += 2) i ? ctx.lineTo(o.pts[i], o.pts[i + 1]) : ctx.moveTo(o.pts[i], o.pts[i + 1]);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.setLineDash([]);
+    if (sel) {
+      // raios do pivô até cada cópia do repetidor
+      if (g.repeat) {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.beginPath();
+        for (const M of PF.hz.copyMatrices(g)) {
+          let cx = 0, cy = 0;
+          for (const it of g.items) { cx += it.x; cy += it.y; }
+          const [x, y] = PF.m.apply(M, cx / Math.max(1, g.items.length), cy / Math.max(1, g.items.length));
+          ctx.moveTo(g.x, g.y); ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+      const hr = PF.groupHandles(g, scale).rot;
+      ctx.beginPath(); ctx.moveTo(g.x, g.y); ctx.lineTo(hr[0], hr[1]); ctx.stroke();
+      ctx.beginPath(); ctx.arc(hr[0], hr[1], 5 / scale, 0, TAU);
+      ctx.fillStyle = C.bg; ctx.fill(); ctx.stroke();
+    }
+    // pivô coletivo: losango maior, com anel
+    const r = (sel ? 8 : 6) / scale;
+    ctx.beginPath();
+    ctx.moveTo(g.x, g.y - r); ctx.lineTo(g.x + r, g.y); ctx.lineTo(g.x, g.y + r); ctx.lineTo(g.x - r, g.y);
+    ctx.closePath();
+    ctx.fillStyle = sel ? C.accent : C.muted;
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(g.x, g.y, r * 1.7, 0, TAU); ctx.stroke();
   }
 
   function shapeGizmo(ctx, h, sel, scale) {

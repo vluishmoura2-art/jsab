@@ -40,6 +40,7 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   início em `level.spawn`, losango gira para a direção do movimento), loop.
   `app.playLevel()` joga uma fase online sem tocar na fase do editor (`app.editLevel` guarda a
   sua; `commit()` não salva enquanto isso).
+- `js/mass.js` — edição em massa e presets de grupo (`PF.mass`), carregado depois do `main.js`
 - `js/online.js` — fases online (`PF.online`): publicar, lista ao vivo (SSE), jogar/abrir, avisos (`PF.toast`).
   Cópia local das fases de todos em `localStorage['pulsefield.publishedCache']` (por servidor:
   lista + JSON de cada fase, até 300, sem música): baixada em segundo plano, usada sem conexão.
@@ -130,7 +131,23 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   (`PF.hz.setReactive(Map)` + `reactiveTriggers` no main.js, uma vez, no instante + `lead`); no
   editor (`PF.hz.preview = true`) a prévia imagina o jogador parado no início; `levelCheck` e servidor
   os ignoram. Losangos marcam os disparos no bloco da timeline e no mapa.
-  Próximas etapas: telegrafia do caminho, grupos/repetidor.
+  Grupo (`type: 'group'`, Ctrl+G com Formas selecionadas, faixa "Forma / grupo"): guarda os itens
+  dentro (`g.items`, até 32, formas ou grupos até 3 níveis) com x/y relativos ao pivô coletivo (`x,y`
+  do grupo) e `time` relativo ao começo do grupo. `rot`, `scale` (%) e `behaviors` do grupo giram/
+  escalam/movem tudo em volta do pivô. Repetidor (`repeat` 1 radial/mandala, 2 grade, 3 espiral;
+  `count`, `angle`, `cols/dx/dy`, `grow`, `delay` em bt entre cópias); máx. 256 formas desenhadas
+  (`count` cai no normalize). Saída = formas dos itens levadas ao mundo (`xform`), então colisão,
+  levelCheck e servidor não mudam. Gatilhos reativos não valem dentro de grupos (`inGroup`).
+  Mapa: contornos das cópias, alça de giro acima do pivô, Alt+arrastar move o pivô sem mexer nas
+  formas (itens compensam). Painel: lista de itens (clique abre o editor do item: forma,
+  comportamentos e gatilhos), comportamentos do grupo, Desagrupar (Ctrl+Shift+G: cada cópia vira
+  peças soltas; comportamentos do grupo ficam de fora) e Salvar preset.
+  Seleção múltipla (`app.multi`, Shift+clique no mapa/timeline, Ctrl+A): arrastar move todos (espaço
+  e tempo), copiar/colar/duplicar/excluir valem para todos; painel de massa (`js/mass.js`, `PF.mass`):
+  agrupar, girar/escalar em volta do centro da seleção ou da arena, distribuir (radial, grade,
+  espiral; apontar para fora), escada no tempo (bt), pulsar todos. Presets de grupo em
+  `localStorage['pulsefield.presets']` (painel da fase: inserir no centro, na agulha).
+  Próxima etapa: telegrafia do caminho.
   Com BPM, perigos novos nascem na batida (encaixe) e os blocos mostram "c3 b2" (compasso/batida);
   a preferência do encaixe fica em `localStorage['pulsefield.snap']`.
 

@@ -9,6 +9,7 @@
 
   const tl = PF.timeline = { pps: 40, scroll: 0, w: 0, h: 0, dpr: 1, canvas: null, ctx: null, drag: null };
 
+  const laneOf = h => (h.type === 'group' ? 'shape' : h.type); // grupos ficam na faixa das Formas
   const tx = t => GUT + (t - tl.scroll) * tl.pps;
   const xt = x => (x - GUT) / tl.pps + tl.scroll;
 
@@ -143,15 +144,15 @@
     ctx.beginPath();
     ctx.rect(GUT, RULER, w - GUT, h - RULER);
     ctx.clip();
-    const ordered = app.level.hazards.slice().sort((a, b) => a.time - b.time || (a.id === app.selectedId) - (b.id === app.selectedId));
+    const ordered = app.level.hazards.slice().sort((a, b) => a.time - b.time || app.isSelected(a.id) - app.isSelected(b.id));
     for (const hz of ordered) {
-      const lane = LANES.indexOf(hz.type);
+      const lane = LANES.indexOf(laneOf(hz));
       const [xa, xb] = blockRange(hz);
       if (xb < GUT || xa > w) continue;
       const def = PF.HAZARDS[hz.type];
       const y = TOP + lane * LANE + 4, bh = LANE - 8;
       const xs = tx(hz.time), xw = tx(hz.time + def.warnLen(hz));
-      const sel = hz.id === app.selectedId;
+      const sel = app.isSelected(hz.id);
 
       ctx.fillStyle = 'rgba(255,77,94,0.16)';
       ctx.fillRect(xa, y, xb - xa, bh);
@@ -183,7 +184,7 @@
         ctx.clip();
         ctx.fillStyle = sel ? C.accent : C.text;
         ctx.font = FONT_MONO;
-        ctx.fillText('#' + hz.id + ' ' + timeLabel(hz.time, app), Math.max(xs, GUT) + 5, y + bh / 2 + 1);
+        ctx.fillText((hz.type === 'group' ? '▣' : '#') + hz.id + ' ' + timeLabel(hz.time, app), Math.max(xs, GUT) + 5, y + bh / 2 + 1);
         ctx.restore();
       }
     }
@@ -209,7 +210,7 @@
       ctx.fillStyle = C.danger;
       ctx.fillRect(12, TOP + i * LANE + LANE / 2 - 3, 6, 6);
       ctx.fillStyle = C.text;
-      ctx.fillText(PF.HAZARDS[type].label, 26, TOP + i * LANE + LANE / 2 + 1);
+      ctx.fillText(type === 'shape' ? 'Forma / grupo' : PF.HAZARDS[type].label, 26, TOP + i * LANE + LANE / 2 + 1);
     });
 
     drawPlayhead(ctx, w, h, app);
@@ -317,7 +318,7 @@
     const type = LANES[Math.floor((y - TOP) / LANE)];
     if (!type) return null;
     const app = PF.app;
-    const list = app.level.hazards.filter(h => h.type === type);
+    const list = app.level.hazards.filter(h => laneOf(h) === type);
     const sel = list.find(h => h.id === app.selectedId);
     if (sel) list.push(sel); // o selecionado tem prioridade
     for (let i = list.length - 1; i >= 0; i--) {
@@ -335,8 +336,14 @@
     const app = PF.app;
     const blk = hitBlock(x, y);
     if (blk) {
-      app.select(blk.id);
-      tl.drag = { kind: 'move', id: blk.id, grab: xt(x) - blk.time, moved: false };
+      if (e.shiftKey) { // soma/tira da seleção
+        app.toggleSelect(blk.id);
+        if (!app.isSelected(blk.id)) return;
+      } else if (!app.isSelected(blk.id)) app.select(blk.id);
+      else { app.selectedId = blk.id; PF.panel.refresh(); }
+      tl.drag = { kind: 'move', id: blk.id, grab: xt(x) - blk.time, moved: false, shift: e.shiftKey, t0: blk.time };
+      // vários selecionados: todos andam juntos no tempo
+      if (app.multi.size) tl.drag.others = app.selection().filter(h => h.id !== blk.id).map(h => ({ h, t: h.time }));
       return;
     }
     if (y > RULER) app.select(null);
@@ -358,12 +365,19 @@
     let nt = xt(x) - d.grab;
     nt = e.altKey ? u.round(nt, 2) : app.snapTime(nt);
     nt = u.round(u.clamp(nt, 0, app.level.duration), 4);
-    if (nt !== h.time) { h.time = nt; d.moved = true; app.changed(false); }
+    if (nt !== h.time) {
+      h.time = nt; d.moved = true;
+      if (d.others) for (const o of d.others) o.h.time = u.round(u.clamp(o.t + nt - d.t0, 0, app.level.duration), 4);
+      app.changed(false);
+    }
     tl.canvas.style.cursor = 'grabbing';
   }
 
   function onUp() {
-    if (tl.drag && tl.drag.kind === 'move' && tl.drag.moved) PF.app.commit();
+    const d = tl.drag;
+    if (d && d.kind === 'move' && d.moved) PF.app.commit();
+    // clique sem arrastar num bloco de uma seleção múltipla: fica só ele
+    else if (d && d.kind === 'move' && !d.shift && PF.app.multi.size) PF.app.select(d.id);
     tl.drag = null;
   }
 

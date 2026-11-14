@@ -16,8 +16,35 @@
 
     selected() { return this.level.hazards.find(h => h.id === this.selectedId) || null; },
     spawnSelected: false,
+    // seleção múltipla (Shift+clique, Ctrl+A): ids; vazio = só selectedId
+    multi: new Set(),
+    isSelected(id) { return id === this.selectedId || this.multi.has(id); },
+    selection() {
+      const ids = this.multi.size ? this.multi : new Set(this.selectedId == null ? [] : [this.selectedId]);
+      return this.level.hazards.filter(h => ids.has(h.id));
+    },
 
-    select(id) { this.selectedId = id; this.spawnSelected = false; PF.panel.refresh(); },
+    select(id) { this.selectedId = id; this.multi.clear(); this.spawnSelected = false; PF.panel.refresh(); },
+    // soma/tira da seleção (Shift+clique)
+    toggleSelect(id) {
+      if (!this.multi.size && this.selectedId != null) this.multi.add(this.selectedId);
+      if (this.multi.has(id)) this.multi.delete(id); else this.multi.add(id);
+      if (this.multi.size <= 1) {
+        const only = [...this.multi][0];
+        this.multi.clear();
+        this.selectedId = only == null ? null : only;
+      } else this.selectedId = this.multi.has(id) ? id : [...this.multi].pop();
+      this.spawnSelected = false;
+      PF.panel.refresh();
+    },
+    selectAll() {
+      const hs = this.level.hazards;
+      if (!hs.length) return;
+      this.multi = new Set(hs.map(h => h.id));
+      this.selectedId = hs[hs.length - 1].id;
+      if (this.multi.size === 1) this.multi.clear();
+      PF.panel.refresh();
+    },
     setTime(t) {
       this.t = u.clamp(t, 0, this.level.duration);
       if (this.playing) PF.audio.play(this.t); // reposiciona a música junto
@@ -62,6 +89,9 @@
     restore() {
       this.level = PF.storage.normalize(JSON.parse(this.history[this.hIndex]));
       if (!this.selected()) this.selectedId = null;
+      const ids = new Set(this.level.hazards.map(h => h.id));
+      for (const id of [...this.multi]) if (!ids.has(id)) this.multi.delete(id);
+      if (this.multi.size === 1) this.multi.clear();
       this.setTime(this.t);
       PF.panel.rebuild();
       PF.storage.save(this.level);
@@ -69,9 +99,11 @@
     },
 
     deleteSelected() {
-      if (this.selectedId == null) return;
-      this.level.hazards = this.level.hazards.filter(h => h.id !== this.selectedId);
+      const ids = new Set(this.selection().map(h => h.id));
+      if (!ids.size) return;
+      this.level.hazards = this.level.hazards.filter(h => !ids.has(h.id));
       this.selectedId = null;
+      this.multi.clear();
       PF.panel.rebuild();
       this.commit();
     },
@@ -91,36 +123,48 @@
     clipboard: null, // cópia (JSON) do perigo copiado
 
     copy() {
-      const h = this.selected();
-      if (!h || this.editLevel) return false;
-      this.clipboard = JSON.stringify(h);
-      if (PF.toast) PF.toast(`${PF.HAZARDS[h.type].label} copiada · Ctrl+V cola no tempo do playhead`);
+      const list = this.selection();
+      if (!list.length || this.editLevel) return false;
+      this.clipboard = JSON.stringify(list);
+      if (PF.toast) PF.toast((list.length > 1 ? list.length + ' perigos copiados' : PF.HAZARDS[list[0].type].label + ' copiada') + ' · Ctrl+V cola no tempo do playhead');
       return true;
     },
-    // Cola no tempo atual do playhead; se for o mesmo tempo do original, desloca um pouco no mapa.
+    // seleciona uma lista recém-criada (um só = seleção simples)
+    selectList(list) {
+      this.select(list.length ? list[list.length - 1].id : null);
+      if (list.length > 1) { for (const c of list) this.multi.add(c.id); PF.panel.refresh(); }
+    },
+    // Cola no tempo atual do playhead (o mais cedo vai para lá, os outros mantêm a distância);
+    // se for o mesmo tempo do original, desloca um pouco no mapa.
     paste() {
       if (!this.clipboard || this.editLevel) return;
-      const src = JSON.parse(this.clipboard);
-      const c = PF.hz.clone(src);
-      c.time = u.round(u.clamp(this.t, 0, this.level.duration), 2);
-      if (Math.abs(c.time - src.time) < 0.01) {
-        c.x = u.clamp(c.x + 30, -400, W + 400);
-        c.y = u.clamp(c.y + 30, -400, H + 400);
-      }
-      this.level.hazards.push(c);
-      this.clipboard = JSON.stringify(c); // colar de novo continua deslocando
-      this.select(c.id);
+      let src = JSON.parse(this.clipboard);
+      if (!Array.isArray(src)) src = [src];
+      const t0 = Math.min(...src.map(h => h.time));
+      const to = u.round(u.clamp(this.t, 0, this.level.duration), 2), same = Math.abs(to - t0) < 0.01;
+      const out = src.map(h => {
+        const c = PF.hz.clone(h);
+        c.time = u.round(u.clamp(to + (h.time - t0), 0, this.level.duration), 4);
+        if (same) { c.x = u.clamp(c.x + 30, -400, W + 400); c.y = u.clamp(c.y + 30, -400, H + 400); }
+        return c;
+      });
+      this.level.hazards.push(...out);
+      this.clipboard = JSON.stringify(out); // colar de novo continua deslocando
+      this.selectList(out);
       this.commit();
     },
-    // Copiar e colar de uma vez: cópia no mesmo tempo, um pouco ao lado.
+    // Copiar e colar de uma vez: cópias no mesmo tempo, um pouco ao lado.
     duplicate() {
-      const h = this.selected();
-      if (!h || this.editLevel) return;
-      const c = PF.hz.clone(h);
-      c.x = u.clamp(c.x + 30, -400, W + 400);
-      c.y = u.clamp(c.y + 30, -400, H + 400);
-      this.level.hazards.push(c);
-      this.select(c.id);
+      const list = this.selection();
+      if (!list.length || this.editLevel) return;
+      const out = list.map(h => {
+        const c = PF.hz.clone(h);
+        c.x = u.clamp(c.x + 30, -400, W + 400);
+        c.y = u.clamp(c.y + 30, -400, H + 400);
+        return c;
+      });
+      this.level.hazards.push(...out);
+      this.selectList(out);
       this.commit();
     },
   };
@@ -184,8 +228,13 @@
       return;
     }
     // alças da Forma selecionada: giro, tamanho, e Alt+arrastar para mudar o pivô
-    const cur = app.selected();
-    if (cur && cur.type === 'shape') {
+    const cur = app.multi.size ? null : app.selected();
+    if (cur && cur.type === 'group' && !e.shiftKey) {
+      const near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+      if (near(PF.groupHandles(cur, view.scale).rot)) { drag = { id: cur.id, kind: 'grot', moved: false }; return; }
+      if (e.altKey && PF.HAZARDS.group.hit(cur, p.x, p.y, 10 / view.scale)) { drag = { id: cur.id, kind: 'gpivot', moved: false }; return; }
+    }
+    if (cur && cur.type === 'shape' && !e.shiftKey) {
       const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
       for (const c of hd.path) {
         for (const q of c.pts) {
@@ -213,10 +262,18 @@
     }
     const h = pick(p.x, p.y);
     if (h) {
-      app.select(h.id);
+      if (e.shiftKey) { // soma/tira da seleção
+        app.toggleSelect(h.id);
+        if (!app.isSelected(h.id)) return;
+      } else if (!app.isSelected(h.id)) app.select(h.id);
+      else { app.selectedId = h.id; PF.panel.refresh(); }
       const hy = h.type === 'water' ? H - h.height : h.y; // na água a alça fica na superfície
-      drag = { id: h.id, dx: h.x - p.x, dy: hy - p.y, moved: false };
-    } else {
+      drag = { id: h.id, dx: h.x - p.x, dy: hy - p.y, moved: false, shift: e.shiftKey };
+      if (app.multi.size) { // vários: todos andam juntos
+        drag.others = app.selection().filter(z => z.id !== h.id && z.type !== 'water').map(z => ({ z, x: z.x, y: z.y }));
+        drag.x0 = h.x; drag.y0 = h.y;
+      }
+    } else if (!e.shiftKey) {
       app.select(null);
     }
   });
@@ -227,7 +284,12 @@
       if (app.tool === 'select') {
         const sp = app.level.spawn;
         const overSpawn = Math.hypot(p.x - sp.x, p.y - sp.y) <= 16;
-        const cur = app.selected();
+        const cur = app.multi.size ? null : app.selected();
+        if (cur && cur.type === 'group') {
+          const near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+          if (near(PF.groupHandles(cur, view.scale).rot)) { stage.style.cursor = 'grab'; return; }
+          if (e.altKey && PF.HAZARDS.group.hit(cur, p.x, p.y, 10 / view.scale)) { stage.style.cursor = 'crosshair'; return; }
+        }
         if (cur && cur.type === 'shape') {
           const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
           if (hd.path.some(c => c.pts.some(q => near([q.x, q.y])))) { stage.style.cursor = 'move'; return; }
@@ -257,12 +319,31 @@
       }
       return;
     }
-    if (nx !== h.x || ny !== h.y) { h.x = nx; h.y = ny; drag.moved = true; app.changed(false); }
+    if (nx !== h.x || ny !== h.y) {
+      h.x = nx; h.y = ny; drag.moved = true;
+      if (drag.others) {
+        const dx = nx - drag.x0, dy = ny - drag.y0;
+        for (const o of drag.others) { o.z.x = u.clamp(o.x + dx, -400, W + 400); o.z.y = u.clamp(o.y + dy, -400, H + 400); }
+      }
+      app.changed(false);
+    }
   });
   // arrastar uma alça da Forma
   function shapeDrag(h, p, e) {
     const set = (k, v) => { if (h[k] !== v) { h[k] = v; drag.moved = true; } };
-    if (drag.kind === 'path') {
+    if (drag.kind === 'grot') { // a alça fica acima do pivô quando a rotação é 0
+      let a = Math.atan2(p.y - h.y, p.x - h.x) * 180 / Math.PI + 90;
+      if (e.shiftKey) a = Math.round(a / 15) * 15;
+      set('rot', ((Math.round(a) + 540) % 360) - 180);
+    } else if (drag.kind === 'gpivot') {
+      // pivô coletivo vai para o mouse e as formas ficam paradas: itens andam o contrário
+      const [lx, ly] = PF.m.apply(PF.m.invert(PF.hz.copyMatrices(h)[0]), p.x, p.y);
+      if (Math.abs(lx) + Math.abs(ly) > 0.5) {
+        for (const it of h.items) { it.x = u.round(it.x - lx, 2); it.y = u.round(it.y - ly, 2); }
+        h.x = u.round(p.x, 2); h.y = u.round(p.y, 2);
+        drag.moved = true;
+      }
+    } else if (drag.kind === 'path') {
       const b = h.behaviors[drag.bi];
       if (!b) return;
       let nx = p.x - drag.ox, ny = p.y - drag.oy;
@@ -297,7 +378,12 @@
     }
     if (drag.moved) app.changed(false);
   }
-  const endDrag = () => { if (drag && drag.moved) app.commit(); drag = null; };
+  const endDrag = () => {
+    if (drag && drag.moved) app.commit();
+    // clique (sem arrastar) num item de uma seleção múltipla: fica só ele
+    else if (drag && !drag.shift && !drag.kind && !drag.spawn && app.multi.size) app.select(drag.id);
+    drag = null;
+  };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
 
@@ -366,11 +452,13 @@
     copy: '<path d="M8 8h12v12H8z"/><path d="M16 8V4H4v12h4"/>',
     paste: '<path d="M5 4h14v17H5z"/><path d="M9 4V2.5h6V4M9 11h6M9 15h4"/>',
     dup: '<path d="M3 3h11v11H3z"/><path d="M10 10h11v11H10z"/><path d="M15.5 13.5v4M13.5 15.5h4"/>',
+    group: '<path d="M2 6V2h4M18 2h4v4M22 18v4h-4M6 22H2v-4"/><circle cx="9" cy="9" r="3"/><path d="M13 12h6v6h-6z"/><path d="M6 19l3-5 3 5z"/>',
   };
   const EDITS = [
     { id: 'copy', label: 'Copiar', key: 'Ctrl+C', short: '^C', run: () => app.copy(), needs: () => !!app.selected() },
     { id: 'paste', label: 'Colar', key: 'Ctrl+V', short: '^V', run: () => app.paste(), needs: () => !!app.clipboard },
     { id: 'dup', label: 'Copiar e colar', key: 'Ctrl+D', short: '^D', run: () => app.duplicate(), needs: () => !!app.selected() },
+    { id: 'group', label: 'Agrupar (Shift+clique soma à seleção)', key: 'Ctrl+G', short: '^G', run: () => PF.mass.group(), needs: () => app.selection().some(h => h.type === 'shape' || h.type === 'group') },
   ];
   groupLabel('EDITAR');
   for (const t of EDITS) {
@@ -806,6 +894,8 @@
       if (k === 'z') { e.shiftKey ? app.redo() : app.undo(); e.preventDefault(); }
       else if (k === 'y') { app.redo(); e.preventDefault(); }
       else if (k === 'd') { app.duplicate(); e.preventDefault(); }
+      else if (k === 'a') { app.selectAll(); e.preventDefault(); }
+      else if (k === 'g') { if (e.shiftKey) PF.mass.ungroup(); else PF.mass.group(); e.preventDefault(); }
       else if (k === 'c') { if (app.copy()) e.preventDefault(); }
       else if (k === 'v') { if (app.clipboard) { app.paste(); e.preventDefault(); } }
       return;

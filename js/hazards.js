@@ -925,6 +925,7 @@
   function triggerTimes(h, t, ti) {
     const A = h.active;
     if (isReactive(t)) {
+      if (inGroup) return []; // dentro de grupo: sem disparo reativo
       if (REACT) { const v = REACT.get(h.id + ':' + ti); return v != null && v <= A ? [v] : []; }
       if (!PF.hz.preview) return [];
       // prévia no editor: primeiro instante em que o jogador parado no início seria alcançado
@@ -976,7 +977,7 @@
   function shapeEvents(h) {
     let sig = JSON.stringify(h) + '|' + BEAT + '|' + OFFSET;
     if ((h.triggers || []).some(isReactive)) { // disparos reativos mudam os eventos
-      sig += REACT ? '|R' + (h.triggers || []).map((t, i) => REACT.get(h.id + ':' + i)).join(',')
+      sig += inGroup ? '|G' : REACT ? '|R' + (h.triggers || []).map((t, i) => REACT.get(h.id + ':' + i)).join(',')
         : PF.hz.preview ? '|P' + SPAWN.x + ',' + SPAWN.y : '|-';
     }
     const c = evCache.get(h);
@@ -1197,6 +1198,187 @@
     },
   };
 
+  // ---------- Grupo (modo manual) ----------
+  // Guarda formas (ou outros grupos) dentro dele, em coordenadas relativas ao pivô do grupo
+  // (x, y) e com tempo relativo ao começo do grupo. O grupo tem rotação, escala e a mesma pilha
+  // de comportamentos da Forma, aplicadas em volta do pivô (pivô coletivo), e um repetidor que
+  // copia os itens: radial (mandala), em grade ou em espiral, com atraso entre as cópias.
+  // A saída continua sendo circle/ring/line/rect/poly: colisão, levelCheck e servidor não mudam.
+  const MAX_ITEMS = 32, MAX_DEPTH = 3, MAX_INSTANCES = 256;
+  const REP_NONE = 0, REP_RADIAL = 1, REP_GRID = 2, REP_SPIRAL = 3;
+  let inGroup = 0; // > 0 enquanto avalia itens de grupo (gatilhos reativos não valem lá dentro)
+  const repCount = g => (g.repeat ? Math.max(1, g.count) : 1);
+  // matriz da cópia i em coords do grupo (gira/escala em volta do pivô, que é a origem)
+  function repMatrix(g, i) {
+    if (!g.repeat || i === 0) return null;
+    if (g.repeat === REP_RADIAL) return PF.m.compose(0, 0, g.angle * i, 1, 1, 0, 0);
+    if (g.repeat === REP_GRID) return [1, 0, 0, 1, (i % g.cols) * g.dx, Math.floor(i / g.cols) * g.dy];
+    const k = Math.max(0.02, 1 + g.grow / 100 * i);
+    return PF.m.compose(0, 0, g.angle * i, k, k, 0, 0);
+  }
+  // matriz do grupo (coords locais → mundo) numa pose
+  const groupMatrix = (g, p) => {
+    const s = g.scale / 100 * (p ? p.s : 1);
+    return PF.m.compose(p ? p.x : g.x, p ? p.y : g.y, p ? p.rot : g.rot, s, s, 0, 0);
+  };
+  const groupPose = (g, lt) => { const t = Math.max(0, lt); return shapePose(g, t, g.time + t); };
+  // matrizes de todas as cópias (pose do grupo opcional; sem ela, pose de repouso)
+  function copyMatrices(g, pose) {
+    const G = groupMatrix(g, pose), out = [];
+    for (let i = 0, n = repCount(g); i < n; i++) { const R = repMatrix(g, i); out.push(R ? PF.m.mul(G, R) : G); }
+    return out;
+  }
+  // leva uma forma de saída das coords do grupo para o mundo (escala uniforme k, giro rr em rad)
+  function xform(s, M, k, rr) {
+    const o = { ...s };
+    if (s.kind === 'line') {
+      [o.x1, o.y1] = PF.m.apply(M, s.x1, s.y1);
+      [o.x2, o.y2] = PF.m.apply(M, s.x2, s.y2);
+      o.w = s.w * k;
+    } else if (s.kind === 'poly') {
+      const p = s.pts, q = new Array(p.length);
+      for (let i = 0; i < p.length; i += 2) { const [x, y] = PF.m.apply(M, p[i], p[i + 1]); q[i] = x; q[i + 1] = y; }
+      o.pts = q;
+    } else {
+      [o.x, o.y] = PF.m.apply(M, s.x, s.y);
+      if (s.kind === 'circle') o.r = s.r * k;
+      else if (s.kind === 'ring') { o.r = s.r * k; o.w = s.w * k; }
+      else if (s.kind === 'rect') { o.w = s.w * k; o.h = s.h * k; o.rot = (s.rot || 0) + rr; }
+    }
+    return o;
+  }
+  const itemLen = it => { const d = PF.HAZARDS[it.type]; return it.time + d.length(it); };
+
+  PF.HAZARDS.group = {
+    label: 'Grupo',
+    desc: 'Grupo de formas com um pivô só (o losango): girar, escalar e os comportamentos do grupo acontecem em volta dele. O repetidor copia os itens em volta do pivô (radial = mandala), em grade ou em espiral, com atraso em batidas entre as cópias. No mapa: arraste para mover, a bolinha gira o grupo, Alt+arrastar muda o pivô sem mexer nas formas. Os itens são editados aqui no painel; "Desagrupar" (Ctrl+Shift+G) solta as formas no mapa.',
+    defaults: { rot: 0, scale: 100, repeat: REP_NONE, count: 6, angle: 60, delay: 0, cols: 3, dx: 140, dy: 140, grow: 12, items: [], behaviors: [] },
+    props: [
+      { key: 'rot', label: 'Rotação', min: -360, max: 360, step: 1, unit: '°' },
+      { key: 'scale', label: 'Escala', min: 5, max: 500, step: 1, unit: '%' },
+      { key: 'repeat', label: 'Repetir', type: 'select', rebuild: true,
+        options: [[REP_NONE, 'Sem repetir'], [REP_RADIAL, 'Radial (mandala)'], [REP_GRID, 'Em grade'], [REP_SPIRAL, 'Em espiral']] },
+      { key: 'count', label: 'Cópias', min: 1, max: 64, step: 1, unit: '', show: g => g.repeat },
+      { key: 'angle', label: 'Ângulo entre cópias', min: -360, max: 360, step: 1, unit: '°', show: g => g.repeat === REP_RADIAL || g.repeat === REP_SPIRAL },
+      { key: 'grow', label: 'Cresce por cópia', min: -50, max: 200, step: 1, unit: '%', show: g => g.repeat === REP_SPIRAL },
+      { key: 'cols', label: 'Colunas', min: 1, max: 16, step: 1, unit: '', show: g => g.repeat === REP_GRID },
+      { key: 'dx', label: 'Espaço X', min: -1500, max: 1500, step: 1, unit: 'px', show: g => g.repeat === REP_GRID },
+      { key: 'dy', label: 'Espaço Y', min: -1500, max: 1500, step: 1, unit: 'px', show: g => g.repeat === REP_GRID },
+      { key: 'delay', label: 'Atraso entre cópias', min: 0, max: 16, step: 0.125, unit: 'bt', show: g => g.repeat },
+    ],
+    extra(raw, h, depth) {
+      h.behaviors = normBehaviors(raw.behaviors);
+      h.items = [];
+      if (Array.isArray(raw.items) && depth < MAX_DEPTH) {
+        for (const r of raw.items) {
+          if (h.items.length >= MAX_ITEMS) break;
+          if (!r || (r.type !== 'shape' && !(r.type === 'group' && depth + 1 < MAX_DEPTH))) continue;
+          const n = PF.hz.normalize(r, depth + 1);
+          if (!n) continue;
+          const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+          n.x = u.clamp(num(r.x, 0), -3000, 3000); // coords relativas ao pivô do grupo
+          n.y = u.clamp(num(r.y, 0), -3000, 3000);
+          n.time = u.clamp(num(r.time, 0), 0, 600);
+          n.id = h.items.length + 1;
+          h.items.push(n);
+        }
+      }
+      // limite de cópias × itens (mandalas grandes ainda cabem; o servidor não engasga)
+      const per = Math.max(1, countInstances(h) / repCount(h));
+      if (h.repeat && repCount(h) * per > MAX_INSTANCES) h.count = Math.max(1, Math.floor(MAX_INSTANCES / per));
+    },
+    lead: () => 0,
+    warnLen: () => 0,
+    length(g) {
+      let m = 0;
+      inGroup++;
+      try { for (const it of g.items) m = Math.max(m, itemLen(it)); } finally { inGroup--; }
+      return m + (repCount(g) - 1) * g.delay * BEAT;
+    },
+    shapes(g, lt, out) {
+      if (lt < 0 || !g.items.length) return;
+      const Ms = copyMatrices(g, groupPose(g, lt)), delay = g.delay * BEAT;
+      inGroup++;
+      try {
+        Ms.forEach((M, i) => {
+          const k = Math.hypot(M[0], M[1]), rr = Math.atan2(M[1], M[0]), lti = lt - i * delay;
+          for (const it of g.items) {
+            const d = PF.HAZARDS[it.type], l = lti - it.time;
+            if (l < -d.lead(it) || l > d.length(it)) continue;
+            const tmp = [];
+            d.shapes(it, l, tmp);
+            for (const s of tmp) out.push(xform(s, M, k, rr));
+          }
+        });
+      } finally { inGroup--; }
+    },
+    // clique: o ponto volta para as coords de cada cópia e testa nos itens em repouso
+    hit(g, x, y, tol) {
+      if (Math.hypot(x - g.x, y - g.y) <= tol * 1.5) return true;
+      for (const M of copyMatrices(g)) {
+        const k = Math.hypot(M[0], M[1]) || 1;
+        const [lx, ly] = PF.m.apply(PF.m.invert(M), x, y);
+        for (const it of g.items) if (PF.HAZARDS[it.type].hit(it, lx, ly, tol / k)) return true;
+      }
+      return false;
+    },
+  };
+  // quantas formas o grupo desenha (cópias × itens, contando grupos dentro)
+  function countInstances(g) {
+    let n = 0;
+    for (const it of g.items || []) n += it.type === 'group' ? countInstances(it) : 1;
+    return n * repCount(g);
+  }
+
+  // Contornos dos itens em repouso, no mundo (para o gizmo): lista de { pts, copy }
+  function groupOutlines(g, M0, out = [], copyBase = 0) {
+    copyMatrices(g).forEach((Mg, i) => {
+      const M = M0 ? PF.m.mul(M0, Mg) : Mg;
+      for (const it of g.items) {
+        if (it.type === 'group') { groupOutlines(it, M, out, copyBase + i); continue; }
+        const m = PF.m.mul(M, shapeMatrix(it));
+        const loc = it.kind === SHP_LASER ? [-it.w / 2, -it.h / 2, it.w / 2, -it.h / 2, it.w / 2, it.h / 2, -it.w / 2, it.h / 2] : shapeLocal(it);
+        const pts = [];
+        for (let j = 0; j < loc.length; j += 2) pts.push(...PF.m.apply(m, loc[j], loc[j + 1]));
+        out.push({ pts, copy: copyBase + i });
+      }
+    });
+    return out;
+  }
+
+  // Junta formas/grupos soltos num grupo: pivô no centro deles, tempo do mais cedo.
+  function makeGroup(list) {
+    const ok = list.filter(h => h.type === 'shape' || h.type === 'group');
+    if (!ok.length) return null;
+    let cx = 0, cy = 0, t0 = Infinity;
+    for (const h of ok) { cx += h.x; cy += h.y; t0 = Math.min(t0, h.time); }
+    cx = Math.round(cx / ok.length); cy = Math.round(cy / ok.length);
+    const g = PF.hz.create('group', cx, cy, t0);
+    g.items = ok.map((h, i) => ({ ...JSON.parse(JSON.stringify(h)), id: i + 1, x: h.x - cx, y: h.y - cy, time: u.round(h.time - t0, 4) }));
+    return g;
+  }
+  // Solta os itens do grupo no mapa (cada cópia do repetidor vira peças separadas). Os
+  // comportamentos do grupo não têm como ir para as peças: ficam de fora.
+  function ungroup(g) {
+    const out = [], delay = g.delay * BEAT;
+    copyMatrices(g).forEach((M, i) => {
+      const k = Math.hypot(M[0], M[1]), deg = Math.atan2(M[1], M[0]) / D2R;
+      for (const it of g.items) {
+        const c = JSON.parse(JSON.stringify(it));
+        [c.x, c.y] = PF.m.apply(M, it.x, it.y);
+        c.x = u.round(c.x, 2); c.y = u.round(c.y, 2);
+        c.rot = u.round(((it.rot + deg + 540) % 360) - 180, 2);
+        if (c.type === 'shape') {
+          c.w = u.clamp(it.w * k, 4, 3000); c.h = u.clamp(it.h * k, 2, 3000); c.stroke = u.clamp(it.stroke * k, 2, 200);
+          c.pivotX = it.pivotX * k; c.pivotY = it.pivotY * k;
+        } else c.scale = u.clamp(it.scale * k, 5, 500);
+        c.time = u.round(g.time + it.time + i * delay, 4);
+        out.push(c);
+      }
+    });
+    return out;
+  }
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
@@ -1237,6 +1419,12 @@
     newBehavior,
     MAX_BEHAVIORS,
     shapeEvents,
+    groupOutlines,
+    MAX_ITEMS,
+    makeGroup,
+    ungroup,
+    copyMatrices,
+    countInstances,
     // pose com aceleração/transformação (como aparece no jogo) e até quando a forma existe
     livePose: (h, bt) => livePose(h, shapeEvents(h), bt),
     shapeEnd: h => Math.min(h.active, shapeEvents(h).hideAt),
@@ -1303,7 +1491,7 @@
       }
       return false;
     },
-    normalize(raw) {
+    normalize(raw, depth = 0) {
       const def = raw && PF.HAZARDS[raw.type];
       if (!def) return null;
       const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -1315,7 +1503,7 @@
         y: u.clamp(num(raw.y, H / 2), -400, H + 400),
       };
       for (const p of def.props) h[p.key] = normProp(raw, p, def.defaults[p.key]);
-      if (def.extra) def.extra(raw, h); // dados além dos props (ex.: comportamentos da Forma)
+      if (def.extra) def.extra(raw, h, depth); // dados além dos props (comportamentos, itens do grupo…)
       return h;
     },
     // Garante ids únicos e ajusta o contador.

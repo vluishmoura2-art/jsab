@@ -15,8 +15,8 @@
   P.rebuild = () => { boundId = undefined; P.refresh(); };
   P.refresh = () => {
     if (!root) return;
-    const h = PF.app.selected();
-    const id = h ? h.id : null;
+    const h = PF.app.selected(), multi = PF.app.multi;
+    const id = multi.size ? 'm:' + [...multi].sort((a, b) => a - b).join(',') : h ? h.id : null;
     if (id !== boundId) { boundId = id; build(h); }
     else syncers.forEach(f => f());
   };
@@ -87,6 +87,7 @@
   function build(h) {
     syncers = [];
     root.innerHTML = '';
+    if (PF.app.multi.size > 1) return buildMulti(PF.app.selection());
     if (!h) return buildLevel();
     const def = PF.HAZARDS[h.type];
 
@@ -114,10 +115,11 @@
     numberField(s1, h, { key: 'x', label: 'X', min: -400, max: W + 400, step: 1, unit: 'px' });
     numberField(s1, h, { key: 'y', label: 'Y', min: -400, max: H + 400, step: 1, unit: 'px' });
 
-    const s2 = section('Propriedades');
-    for (const p of def.props) (p.type === 'select' ? selectField : rangeField)(s2, h, p);
+    const s2 = section(h.type === 'group' ? 'Grupo e repetidor' : 'Propriedades');
+    propFields(s2, h, def.props);
 
     if (h.type === 'shape') { buildBehaviors(h); buildTriggers(h); }
+    if (h.type === 'group') { buildItems(h); buildBehaviors(h, 'Comportamentos do grupo'); buildGroupActions(h); }
 
     const s3 = section();
     s3.appendChild(el('p', 'text-xs leading-relaxed text-pf-muted', def.desc));
@@ -150,7 +152,7 @@
     const solo = { ...h, behaviors: [{ ...b, on: 1 }] }, n = 80;
     const series = def.group === 'Posição' ? [[], []] : [[]];
     for (let i = 0; i <= n; i++) {
-      const p = PF.hz.shapePose(solo, h.active * i / n);
+      const p = PF.hz.shapePose(solo, durOf(h) * i / n);
       if (def.group === 'Posição') { series[0].push(p.x - h.x); series[1].push(p.y - h.y); }
       else if (def.group === 'Rotação') series[0].push(p.rot - h.rot);
       else series[0].push(p.s);
@@ -173,8 +175,11 @@
     });
   }
 
-  function buildBehaviors(h) {
-    const s = section('Comportamentos');
+  // duração usada nos mini-gráficos (grupo não tem "tempo ativa")
+  const durOf = h => (h.type === 'group' ? Math.max(1, PF.HAZARDS.group.length(h)) : h.active);
+
+  function buildBehaviors(h, title = 'Comportamentos') {
+    const s = section(title);
     const list = h.behaviors;
     if (!list.length) {
       s.appendChild(el('p', 'text-[11px] text-pf-muted mb-3 leading-relaxed',
@@ -238,7 +243,7 @@
       if (!add.value) return;
       list.push(PF.hz.newBehavior(add.value));
       // movimento curto demais para ver? estica o tempo ativa
-      if (h.active < 2) h.active = 2;
+      if (h.type === 'shape' && h.active < 2) h.active = 2;
       P.rebuild();
       PF.app.commit();
     });
@@ -248,8 +253,8 @@
   }
 
   // ---------- gatilhos da Forma ----------
-  function buildTriggers(h) {
-    const s = section('Gatilhos');
+  function buildTriggers(h, title = 'Gatilhos') {
+    const s = section(title);
     const list = h.triggers, A = PF.TRIGGER_ACTIONS;
     const whenOpts = PF.hz.TRG_WHEN[0].options;
     const whenName = w => (whenOpts.find(o => o[0] === w) || [0, ''])[1].replace(/ \(.*\)$/, '');
@@ -327,6 +332,149 @@
       'Na batida/meia batida segue a grade da música. "Aviso antes" mostra as linhas de mira. Explodir, Dividir e Sumir tiram a forma da tela; os losangos no bloco da timeline são os disparos.'));
   }
 
+  // campos de props, respeitando "show" (só aparece em alguns casos) e "rebuild" (muda o painel)
+  function propFields(parent, obj, props) {
+    for (const p of props) {
+      if (p.show && !p.show(obj)) continue;
+      (p.type === 'select' ? selectField : rangeField)(parent, obj, p);
+      if (p.rebuild) parent.lastChild.querySelector('select').addEventListener('change', () => P.rebuild());
+    }
+  }
+
+  // ---------- itens do grupo ----------
+  let openItem = null; // item do grupo aberto para edição (só no editor)
+  const KIND_NAME = ['Círculo', 'Quadrado', 'Triângulo', 'Laser'];
+  function buildItems(g) {
+    const s = section('Itens (' + g.items.length + ')');
+    if (!g.items.includes(openItem)) openItem = null;
+    g.items.forEach((it, i) => {
+      const row = el('div', 'pf-card mb-1.5 flex items-center gap-2 px-2 py-1.5 cursor-pointer' + (it === openItem ? ' border-pf-accent' : ''));
+      if (it === openItem) row.style.borderColor = 'var(--pf-accent)';
+      const name = it.type === 'group' ? 'Grupo (' + it.items.length + ')' : KIND_NAME[it.kind] || 'Forma';
+      row.appendChild(el('span', 'text-xs flex-1 truncate', (i + 1) + '. ' + name));
+      row.appendChild(el('span', 'font-mono text-[10px] text-pf-muted', '+' + it.time.toFixed(2) + 's'));
+      row.appendChild(iconBtn('del', 'Tirar do grupo', () => {
+        if (g.items.length <= 1) { if (PF.toast) PF.toast('O grupo precisa de pelo menos 1 item · use Desagrupar ou Excluir', 'info', 'grp'); return; }
+        g.items.splice(i, 1);
+        P.rebuild();
+        PF.app.commit();
+      }));
+      row.addEventListener('click', () => { openItem = openItem === it ? null : it; P.rebuild(); });
+      s.appendChild(row);
+    });
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed',
+      'Clique num item para editar. X/Y são relativos ao pivô do grupo e o tempo, ao começo do grupo.'));
+    if (!openItem) return;
+    const it = openItem, idx = g.items.indexOf(it) + 1;
+    const ed = section('Item ' + idx);
+    numberField(ed, it, { key: 'time', label: 'Começa (+s no grupo)', min: 0, max: 600, step: 0.05, unit: 's' });
+    numberField(ed, it, { key: 'x', label: 'X (do pivô)', min: -3000, max: 3000, step: 1, unit: 'px' });
+    numberField(ed, it, { key: 'y', label: 'Y (do pivô)', min: -3000, max: 3000, step: 1, unit: 'px' });
+    if (it.type === 'group') {
+      ed.appendChild(el('p', 'text-[11px] text-pf-muted mt-2', 'Grupo dentro de grupo: para mexer nos itens dele, desagrupe este grupo primeiro.'));
+      propFields(ed, it, PF.HAZARDS.group.props);
+      return;
+    }
+    propFields(ed, it, PF.HAZARDS.shape.props);
+    buildBehaviors(it, 'Comportamentos do item ' + idx);
+    buildTriggers(it, 'Gatilhos do item ' + idx);
+  }
+
+  function buildGroupActions(g) {
+    const s = section('Grupo');
+    const row = el('div', 'flex flex-wrap gap-2');
+    const un = el('button', 'pf-btn flex-1', 'Desagrupar');
+    un.title = 'Ctrl+Shift+G · solta as formas (e as cópias do repetidor) no mapa';
+    un.addEventListener('click', () => PF.mass.ungroup());
+    const pr = el('button', 'pf-btn flex-1', 'Salvar preset');
+    pr.title = 'Guarda este grupo no navegador para usar de novo (painel da fase)';
+    pr.addEventListener('click', () => PF.mass.savePreset(g));
+    row.append(un, pr);
+    s.appendChild(row);
+    const n = PF.hz.countInstances(g);
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2', n + ' forma(s) desenhada(s) · máx. 256 por grupo. Gatilhos "jogador perto/encostar" não valem dentro de grupos.'));
+  }
+
+  // ---------- seleção múltipla: edição em massa ----------
+  const massOpts = { deg: 15, around: 0, pct: 120, mode: 0, radius: 220, start: -90, face: 1, cols: 4, gap: 120, r0: 60, rstep: 30, astep: 40, step: 1, amount: 25 };
+  function buildMulti(list) {
+    const head = section();
+    const top = el('div', 'flex items-center gap-2 mb-3');
+    top.appendChild(el('span', 'w-2.5 h-2.5 rotate-45 bg-pf-accent shadow-[0_0_8px_#7CFFB2]'));
+    top.appendChild(el('h2', 'font-semibold text-sm', list.length + ' selecionados'));
+    head.appendChild(top);
+    const kinds = {};
+    for (const h of list) kinds[PF.HAZARDS[h.type].label] = (kinds[PF.HAZARDS[h.type].label] || 0) + 1;
+    head.appendChild(el('p', 'text-[11px] text-pf-muted mb-3', Object.entries(kinds).map(([k, n]) => n + '× ' + k).join(' · ')));
+    const row = el('div', 'flex flex-wrap gap-2');
+    const btn = (label, title, run, cls = '') => { const b = el('button', 'pf-btn flex-1 ' + cls, label); b.title = title; b.addEventListener('click', run); row.appendChild(b); return b; };
+    const grp = btn('Agrupar', 'Ctrl+G · Formas e Grupos viram um grupo com pivô no centro', () => PF.mass.group());
+    grp.disabled = !list.some(h => h.type === 'shape' || h.type === 'group');
+    btn('Duplicar', 'Ctrl+D', () => PF.app.duplicate());
+    btn('Excluir', 'Delete', () => PF.app.deleteSelected(), 'pf-btn-danger');
+    head.appendChild(row);
+    head.appendChild(el('p', 'text-[10px] text-pf-muted mt-2', 'Shift+clique soma ou tira · arrastar move todos (no mapa e na timeline) · Ctrl+A seleciona tudo.'));
+
+    const aroundSel = { key: 'around', label: 'Em volta de', type: 'select', options: [[0, 'Centro da seleção'], [1, 'Centro da arena']] };
+    const apply = (parent, label, run) => { const b = el('button', 'pf-btn pf-btn-primary w-full mt-1', label); b.addEventListener('click', run); parent.appendChild(b); };
+
+    const sr = section('Girar e escalar');
+    selectField(sr, massOpts, aroundSel);
+    numberField(sr, massOpts, { key: 'deg', label: 'Ângulo', min: -360, max: 360, step: 1, unit: '°' });
+    const rr = el('div', 'flex gap-2 mb-3');
+    const rot = (sign, label) => { const b = el('button', 'pf-btn flex-1', label); b.addEventListener('click', () => PF.mass.rotate(sign * massOpts.deg, massOpts.around)); rr.appendChild(b); };
+    rot(-1, '↺ Girar −'); rot(1, 'Girar + ↻');
+    sr.appendChild(rr);
+    numberField(sr, massOpts, { key: 'pct', label: 'Escala', min: 5, max: 500, step: 1, unit: '%' });
+    apply(sr, 'Escalar', () => PF.mass.scale(massOpts.pct, massOpts.around));
+
+    const sd = section('Distribuir');
+    selectField(sd, massOpts, { key: 'mode', label: 'Jeito', type: 'select', options: [[0, 'Radial'], [1, 'Grade'], [2, 'Espiral']] });
+    sd.lastChild.querySelector('select').addEventListener('change', () => P.rebuild());
+    if (massOpts.mode === 0) {
+      numberField(sd, massOpts, { key: 'radius', label: 'Raio', min: 0, max: 2000, step: 1, unit: 'px' });
+      numberField(sd, massOpts, { key: 'start', label: 'Ângulo inicial', min: -180, max: 180, step: 1, unit: '°' });
+    } else if (massOpts.mode === 1) {
+      numberField(sd, massOpts, { key: 'cols', label: 'Colunas', min: 1, max: 32, step: 1, unit: '' });
+      numberField(sd, massOpts, { key: 'gap', label: 'Espaço', min: 0, max: 1000, step: 1, unit: 'px' });
+    } else {
+      numberField(sd, massOpts, { key: 'r0', label: 'Raio inicial', min: 0, max: 2000, step: 1, unit: 'px' });
+      numberField(sd, massOpts, { key: 'rstep', label: 'Raio a mais por item', min: -500, max: 500, step: 1, unit: 'px' });
+      numberField(sd, massOpts, { key: 'start', label: 'Ângulo inicial', min: -180, max: 180, step: 1, unit: '°' });
+      numberField(sd, massOpts, { key: 'astep', label: 'Ângulo a mais por item', min: -360, max: 360, step: 1, unit: '°' });
+    }
+    if (massOpts.mode !== 1) selectField(sd, massOpts, { key: 'face', label: 'Apontar para fora', type: 'select', options: [[1, 'Sim'], [0, 'Não']] });
+    selectField(sd, massOpts, aroundSel);
+    apply(sd, 'Distribuir (na ordem do tempo)', () => PF.mass.distribute(massOpts));
+
+    const st = section('Tempo e ritmo');
+    numberField(st, massOpts, { key: 'step', label: 'Escada: um a cada', min: 0, max: 32, step: 0.125, unit: 'bt' });
+    apply(st, 'Aplicar escada no tempo', () => PF.mass.stagger(massOpts.step));
+    st.appendChild(el('p', 'text-[10px] text-pf-muted mt-1 mb-3', '0 = todos no tempo do primeiro.'));
+    numberField(st, massOpts, { key: 'amount', label: 'Pulsar: cresce', min: -90, max: 300, step: 1, unit: '%' });
+    apply(st, 'Pulsar na batida (todos)', () => PF.mass.pulseAll(massOpts.amount));
+  }
+
+  // presets de grupo guardados no navegador
+  function buildPresets() {
+    const list = PF.mass ? PF.mass.presets() : [];
+    const s = section('Presets');
+    if (!list.length) {
+      s.appendChild(el('p', 'text-[11px] text-pf-muted leading-relaxed', 'Nenhum. Selecione um Grupo e clique em "Salvar preset" para reaproveitar (mandalas, túneis…).'));
+      return;
+    }
+    list.forEach((pr, i) => {
+      const row = el('div', 'pf-card mb-1.5 flex items-center gap-2 px-2 py-1.5');
+      row.appendChild(el('span', 'text-xs flex-1 truncate', pr.name));
+      const ins = el('button', 'pf-btn', 'Inserir');
+      ins.title = 'No centro da arena, no tempo da agulha';
+      ins.addEventListener('click', () => PF.mass.insertPreset(i));
+      row.appendChild(ins);
+      row.appendChild(iconBtn('del', 'Apagar preset', () => PF.mass.removePreset(i)));
+      s.appendChild(row);
+    });
+  }
+
   // BPM, primeira batida, compasso e encaixe na grade
   function buildRhythm(lvl) {
     const app = PF.app;
@@ -389,6 +537,7 @@
     s.appendChild(el('p', 'text-[11px] text-pf-muted mt-2', lvl.hazards.length + ' perigo(s) na fase'));
 
     buildRhythm(lvl);
+    buildPresets();
 
     const sp = section('Jogador');
     numberField(sp, lvl.spawn, { key: 'x', label: 'Início X', min: 12, max: W - 12, step: 1, unit: 'px' });
@@ -414,6 +563,10 @@
     const items = [
       ['1 – 9, 0','escolher perigo e clicar no mapa'],
       ['F', 'forma livre (círculo, quadrado, triângulo, laser)'],
+      ['Shift+clique', 'somar à seleção (mapa e timeline)'],
+      ['Ctrl+A', 'selecionar tudo'],
+      ['Ctrl+G', 'agrupar formas (pivô coletivo, repetidor)'],
+      ['Ctrl+Shift+G', 'desagrupar'],
       ['Alt+arrastar', 'mudar o pivô da forma'],
       ['V / Esc', 'ferramenta de seleção'],
       ['Arrastar', 'mover no mapa ou na timeline'],
