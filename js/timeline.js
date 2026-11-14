@@ -1,15 +1,20 @@
 // Timeline em canvas: régua, uma faixa por tipo de perigo, playhead, arrastar e zoom.
 (function () {
   const { C, u } = PF;
-  const GUT = 100, RULER = 24, MUS = 30, LANE = 22;
+  const GUT = 100, RULER = 24, MUS = 30;
+  let LANE = 22; // altura da faixa: encolhe um pouco (até 15 px) para todas caberem
   const TOP = RULER + MUS; // início das faixas de perigos
-  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake', 'curve', 'thunder', 'double', 'water', 'wheel', 'spike', 'shape'];
+  // 'ctrl' = Âncora / Partículas / Ativador; 'events' = câmera, tema e checkpoints da fase
+  const LANES = ['ball', 'explosive', 'line', 'circle', 'snake', 'curve', 'thunder', 'double', 'water', 'wheel', 'spike', 'shape', 'ctrl', 'events'];
+  const LANE_NAME = { shape: 'Forma / grupo', ctrl: 'Âncora / fx', events: 'Câm. / tema / cp' };
   const FONT_MONO = '10px "JetBrains Mono", monospace';
   const FONT_UI = '11px "Space Grotesk", system-ui, sans-serif';
+  const KEY_COL = { pos: '#7CFFB2', rot: '#4DD8FF', scl: '#FFB347', col: '#FF8A95' };
 
   const tl = PF.timeline = { pps: 40, scroll: 0, w: 0, h: 0, dpr: 1, canvas: null, ctx: null, drag: null };
 
-  const laneOf = h => (h.type === 'group' ? 'shape' : h.type); // grupos ficam na faixa das Formas
+  const CTRL = { anchor: 1, emitter: 1, activator: 1 };
+  const laneOf = h => (h.type === 'group' || h.type === 'prefab' ? 'shape' : CTRL[h.type] ? 'ctrl' : h.type); // grupos e prefabs ficam na faixa das Formas
   const tx = t => GUT + (t - tl.scroll) * tl.pps;
   const xt = x => (x - GUT) / tl.pps + tl.scroll;
 
@@ -21,6 +26,7 @@
     canvas.addEventListener('pointerup', onUp);
     canvas.addEventListener('pointercancel', onUp);
     canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('dblclick', onDbl);
     tl.resize();
   };
 
@@ -30,6 +36,7 @@
     tl.w = r.width; tl.h = r.height;
     tl.canvas.width = Math.round(r.width * tl.dpr);
     tl.canvas.height = Math.round(r.height * tl.dpr);
+    LANE = Math.max(15, Math.min(22, Math.floor((r.height - TOP) / LANES.length)));
   };
 
   // Mantém o playhead visível durante a reprodução.
@@ -89,6 +96,30 @@
     return [xa, xb];
   }
 
+  // chaves do objeto juntas por tempo (absoluto): [{ t, chs }]
+  function keyTimes(h) {
+    const m = new Map();
+    if (h.keys) for (const ch in h.keys) for (const k of h.keys[ch]) {
+      const t = u.round(h.time + k.t, 4);
+      if (!m.has(t)) m.set(t, []);
+      m.get(t).push(ch);
+    }
+    return [...m.entries()].map(([t, chs]) => ({ t, chs }));
+  }
+  // itens da faixa de eventos: checkpoints, chaves da câmera e do tema
+  function eventItems(lvl) {
+    const out = [];
+    (lvl.checkpoints || []).forEach((c, i) => out.push({ kind: 'cp', i, t: c.t }));
+    const cam = lvl.cam || {};
+    for (const ch in cam) cam[ch].forEach((k, i) => out.push({ kind: 'cam', ch, i, t: k.t }));
+    (lvl.theme || []).forEach((k, i) => out.push({ kind: 'theme', i, t: k.t, col: k.hz, bg: k.bg }));
+    return out;
+  }
+  const sameEv = (a, b) => !!a && !!b && a.kind === b.kind && a.i === b.i && (a.ch || '') === (b.ch || '');
+  const laneY = name => TOP + LANES.indexOf(name) * LANE;
+  // largura do rótulo de um marcador na régua
+  function markerLabelW(ctx, m) { ctx.font = FONT_MONO; return ctx.measureText(m.name).width + 14; }
+
   tl.draw = function () {
     const { ctx, w, h } = tl;
     const app = PF.app;
@@ -144,13 +175,21 @@
     ctx.beginPath();
     ctx.rect(GUT, RULER, w - GUT, h - RULER);
     ctx.clip();
+    // linhas dos marcadores (atrás dos blocos)
+    (app.level.markers || []).forEach((m, i) => {
+      const x = Math.round(tx(m.t)) + 0.5;
+      if (x < GUT || x > w) return;
+      const sel = app.sel2 && app.sel2.kind === 'marker' && app.sel2.i === i;
+      ctx.fillStyle = PF.kf.rgba(m.color, sel ? 0.6 : 0.28);
+      ctx.fillRect(x - 0.5, RULER, sel ? 2 : 1, h - RULER);
+    });
     const ordered = app.level.hazards.slice().sort((a, b) => a.time - b.time || app.isSelected(a.id) - app.isSelected(b.id));
     for (const hz of ordered) {
       const lane = LANES.indexOf(laneOf(hz));
       const [xa, xb] = blockRange(hz);
       if (xb < GUT || xa > w) continue;
       const def = PF.HAZARDS[hz.type];
-      const y = TOP + lane * LANE + 4, bh = LANE - 8;
+      const pad = LANE >= 20 ? 4 : 3, y = TOP + lane * LANE + pad, bh = LANE - pad * 2;
       const xs = tx(hz.time), xw = tx(hz.time + def.warnLen(hz));
       const sel = app.isSelected(hz.id);
 
@@ -184,10 +223,44 @@
         ctx.clip();
         ctx.fillStyle = sel ? C.accent : C.text;
         ctx.font = FONT_MONO;
-        ctx.fillText((hz.type === 'group' ? '▣' : '#') + hz.id + ' ' + timeLabel(hz.time, app), Math.max(xs, GUT) + 5, y + bh / 2 + 1);
+        const tag = hz.type === 'group' || hz.type === 'prefab' ? '▣' : CTRL[hz.type] ? PF.HAZARDS[hz.type].label.slice(0, 3) + ' #' : '#';
+        ctx.fillText(tag + hz.id + (hz.parent ? '↑' + hz.parent : '') + ' ' + timeLabel(hz.time, app), Math.max(xs, GUT) + 5, y + bh / 2 + 1);
         ctx.restore();
       }
+      // keyframes: losangos coloridos por canal (só no selecionado, para não poluir)
+      if (sel && !app.multi.size && hz.keys) {
+        const cy = y + bh / 2, kt = keyTimes(hz), selT = app.selKey && app.selKey.id === hz.id ? app.selKey.t : null;
+        for (const k of kt) {
+          const xk = tx(k.t);
+          if (xk < GUT - 6 || xk > w + 6) continue;
+          const r = selT != null && Math.abs(selT - k.t) < 1e-4 ? 6 : 4.5;
+          ctx.fillStyle = C.bg;
+          ctx.beginPath();
+          ctx.moveTo(xk, cy - r - 1.5); ctx.lineTo(xk + r + 1.5, cy); ctx.lineTo(xk, cy + r + 1.5); ctx.lineTo(xk - r - 1.5, cy);
+          ctx.closePath();
+          ctx.fill();
+          // um pedaço do losango para cada canal que tem chave neste tempo
+          k.chs.forEach((ch, j) => {
+            ctx.fillStyle = KEY_COL[ch];
+            ctx.beginPath();
+            const n = k.chs.length, a0 = -Math.PI / 2 + j * 2 * Math.PI / n, a1 = a0 + 2 * Math.PI / n;
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(xk, cy - r); ctx.lineTo(xk + r, cy); ctx.lineTo(xk, cy + r); ctx.lineTo(xk - r, cy);
+            ctx.closePath();
+            ctx.clip();
+            ctx.beginPath();
+            ctx.moveTo(xk, cy); ctx.arc(xk, cy, r * 2, a0, a1); ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          });
+        }
+        // alça do fim do bloco (tempo de vida)
+        ctx.fillStyle = C.accent;
+        ctx.fillRect(xb - 2, y - 1, 3, bh + 2);
+      }
     }
+    drawEvents(ctx, w, app);
     ctx.restore();
 
     // rótulos das faixas
@@ -207,14 +280,67 @@
     ctx.fillStyle = C.line;
     ctx.fillRect(0, TOP - 1, GUT, 1);
     LANES.forEach((type, i) => {
-      ctx.fillStyle = C.danger;
+      ctx.fillStyle = type === 'events' ? C.signal : type === 'ctrl' ? C.player : C.danger;
       ctx.fillRect(12, TOP + i * LANE + LANE / 2 - 3, 6, 6);
       ctx.fillStyle = C.text;
-      ctx.fillText(type === 'shape' ? 'Forma / grupo' : PF.HAZARDS[type].label, 26, TOP + i * LANE + LANE / 2 + 1);
+      ctx.fillText(LANE_NAME[type] || PF.HAZARDS[type].label, 26, TOP + i * LANE + LANE / 2 + 1);
     });
 
+    drawMarkerFlags(ctx, w, app);
     drawPlayhead(ctx, w, h, app);
   };
+
+  // faixa de eventos da fase: checkpoints (bandeira), câmera (losango ciano), tema (quadrado na cor)
+  function drawEvents(ctx, w, app) {
+    const y0 = laneY('events'), cy = y0 + LANE / 2;
+    for (const e of eventItems(app.level)) {
+      const x = tx(e.t);
+      if (x < GUT - 8 || x > w + 8) continue;
+      const sel = sameEv(e, app.sel2);
+      ctx.save();
+      if (e.kind === 'cp') {
+        ctx.fillStyle = sel ? C.accent : C.player;
+        ctx.fillRect(x - 0.5, y0 + 3, 1.5, LANE - 6);
+        ctx.beginPath(); ctx.moveTo(x + 1, y0 + 3); ctx.lineTo(x + 9, y0 + 6); ctx.lineTo(x + 1, y0 + 9); ctx.closePath(); ctx.fill();
+      } else if (e.kind === 'cam') {
+        const r = sel ? 5.5 : 4, oy = { pos: -2, zoom: 2, rot: -2, shake: 2 }[e.ch] || 0;
+        ctx.fillStyle = sel ? C.accent : C.signal;
+        ctx.beginPath(); ctx.moveTo(x, cy + oy - r); ctx.lineTo(x + r, cy + oy); ctx.lineTo(x, cy + oy + r); ctx.lineTo(x - r, cy + oy); ctx.closePath(); ctx.fill();
+      } else {
+        const r = sel ? 5 : 4;
+        ctx.fillStyle = e.bg; ctx.fillRect(x - r, cy - r, r * 2, r * 2);
+        ctx.fillStyle = e.col; ctx.fillRect(x - r + 2, cy - r + 2, r * 2 - 4, r * 2 - 4);
+        ctx.strokeStyle = sel ? C.accent : C.muted; ctx.lineWidth = 1;
+        ctx.strokeRect(x - r + 0.5, cy - r + 0.5, r * 2 - 1, r * 2 - 1);
+      }
+      ctx.restore();
+    }
+  }
+
+  // bandeirinhas dos marcadores na régua, com o nome (cortado no próximo marcador)
+  function drawMarkerFlags(ctx, w, app) {
+    const ms = app.level.markers || [];
+    ctx.save();
+    ctx.beginPath(); ctx.rect(GUT, 0, w - GUT, RULER); ctx.clip();
+    ms.forEach((m, i) => {
+      const x = Math.round(tx(m.t)) + 0.5, next = i + 1 < ms.length ? tx(ms[i + 1].t) : w;
+      if (next < GUT || x > w) return;
+      const sel = app.sel2 && app.sel2.kind === 'marker' && app.sel2.i === i;
+      const lw = Math.min(markerLabelW(ctx, m), Math.max(10, next - x - 2));
+      ctx.fillStyle = PF.kf.rgba(m.color, sel ? 0.4 : 0.2);
+      ctx.fillRect(x, 1, lw, 13);
+      ctx.fillStyle = m.color;
+      ctx.fillRect(x - 0.5, 0, sel ? 2.5 : 1.5, RULER);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, 0, lw, 14); ctx.clip();
+      ctx.font = FONT_MONO;
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = sel ? '#FFFFFF' : m.color;
+      ctx.fillText(m.name, x + 5, 8);
+      ctx.restore();
+    });
+    ctx.restore();
+  }
 
   // Grade de batidas (só com BPM): compasso forte, batida média, subdivisão do encaixe fraca.
   // Na régua: número do compasso. A batida que a agulha acabou de passar acende.
@@ -328,12 +454,97 @@
     return null;
   }
 
+  // marcador sob o mouse na régua (linha ou rótulo)
+  function hitMarker(x, y) {
+    if (y >= RULER) return -1;
+    const ms = PF.app.level.markers || [];
+    for (let i = ms.length - 1; i >= 0; i--) {
+      const xm = tx(ms[i].t);
+      if (Math.abs(x - xm) <= 5 || (y < 15 && x >= xm && x <= xm + markerLabelW(tl.ctx, ms[i]))) return i;
+    }
+    return -1;
+  }
+  // losango de keyframe do objeto selecionado sob o mouse: tempo absoluto ou null
+  function hitKey(x, y) {
+    const app = PF.app, h = app.multi.size ? null : app.selected();
+    if (!h || !h.keys) return null;
+    const y0 = laneY(laneOf(h));
+    if (y < y0 || y > y0 + LANE) return null;
+    let best = null, bd = 6;
+    for (const k of keyTimes(h)) { const d = Math.abs(tx(k.t) - x); if (d <= bd) { bd = d; best = k.t; } }
+    return best == null ? null : { h, t: best };
+  }
+  // fim do bloco selecionado (arrastar muda o tempo de vida)
+  function hitEdge(x, y) {
+    const app = PF.app, h = app.multi.size ? null : app.selected();
+    if (!h) return null;
+    const y0 = laneY(laneOf(h));
+    if (y < y0 || y > y0 + LANE) return null;
+    const xb = blockRange(h)[1];
+    return Math.abs(x - xb) <= 4 ? h : null;
+  }
+  function hitEvent(x, y) {
+    const y0 = laneY('events');
+    if (y < y0 || y > y0 + LANE) return null;
+    let best = null, bd = 7;
+    for (const e of eventItems(PF.app.level)) { const d = Math.abs(tx(e.t) - x); if (d <= bd) { bd = d; best = e; } }
+    return best;
+  }
+  // objeto do evento (marcador, checkpoint, chave da câmera/tema) para mudar o tempo
+  function eventRef(lvl, e) {
+    if (e.kind === 'marker') return lvl.markers[e.i];
+    if (e.kind === 'cp') return lvl.checkpoints[e.i];
+    if (e.kind === 'cam') return lvl.cam[e.ch] && lvl.cam[e.ch][e.i];
+    if (e.kind === 'theme') return lvl.theme[e.i];
+    return null;
+  }
+  function eventList(lvl, e) {
+    if (e.kind === 'marker') return lvl.markers;
+    if (e.kind === 'cp') return lvl.checkpoints;
+    if (e.kind === 'cam') return lvl.cam[e.ch];
+    return lvl.theme;
+  }
+  const snapAbs = (e, t) => u.round(u.clamp(e.altKey ? u.round(t, 2) : PF.app.snapTime(t), 0, PF.app.level.duration), 4);
+
+  function onDbl(e) {
+    const { x, y } = local(e);
+    if (x < GUT) return;
+    const app = PF.app;
+    if (y < RULER) { app.addMarker(snapAbs(e, xt(x))); return; }
+    const y0 = laneY('events');
+    if (y >= y0 && y <= y0 + LANE && !hitEvent(x, y)) app.addCheckpoint(snapAbs(e, xt(x)));
+  }
+
   function onDown(e) {
     if (e.button !== 0) return;
     const { x, y } = local(e);
     if (x < GUT) return;
     tl.canvas.setPointerCapture(e.pointerId);
     const app = PF.app;
+    if (app.mode !== 'edit') { tl.drag = { kind: 'scrub' }; app.setTime(xt(x)); return; }
+    const mi = hitMarker(x, y);
+    if (mi >= 0) {
+      const m = app.level.markers[mi];
+      app.selectEvent('marker', mi);
+      tl.drag = { kind: 'event', ref: m, ev: { kind: 'marker' }, grab: xt(x) - m.t, moved: false };
+      return;
+    }
+    const hk = hitKey(x, y);
+    if (hk) {
+      app.selKey = { id: hk.h.id, t: hk.t };
+      PF.panel.refresh();
+      tl.drag = { kind: 'key', id: hk.h.id, rel: u.round(hk.t - hk.h.time, 4), moved: false };
+      return;
+    }
+    const he = hitEdge(x, y);
+    if (he) { tl.drag = { kind: 'life', id: he.id, moved: false }; return; }
+    const ev = hitEvent(x, y);
+    if (ev) {
+      const ref = eventRef(app.level, ev);
+      app.selectEvent(ev.kind, ev.i, ev.ch);
+      tl.drag = { kind: 'event', ref, ev, grab: xt(x) - ref.t, moved: false };
+      return;
+    }
     const blk = hitBlock(x, y);
     if (blk) {
       if (e.shiftKey) { // soma/tira da seleção
@@ -356,12 +567,47 @@
     const app = PF.app;
     const d = tl.drag;
     if (!d) {
-      tl.canvas.style.cursor = hitBlock(x, y) ? 'grab' : 'default';
+      if (x < GUT) tl.canvas.style.cursor = 'default';
+      else if (hitMarker(x, y) >= 0 || hitKey(x, y)) tl.canvas.style.cursor = 'pointer';
+      else if (hitEdge(x, y)) tl.canvas.style.cursor = 'ew-resize';
+      else tl.canvas.style.cursor = hitEvent(x, y) || hitBlock(x, y) ? 'grab' : 'default';
       return;
     }
     if (d.kind === 'scrub') { app.setTime(xt(x)); return; }
+    if (d.kind === 'event') {
+      const nt = snapAbs(e, xt(x) - d.grab);
+      if (d.ref && nt !== d.ref.t) { d.ref.t = nt; d.moved = true; app.changed(false); }
+      return;
+    }
     const h = app.level.hazards.find(z => z.id === d.id);
     if (!h) return;
+    if (d.kind === 'key') { // todas as chaves desse tempo andam juntas
+      const nr = u.round(Math.max(0, snapAbs(e, xt(x)) - h.time), 4);
+      if (nr !== d.rel) {
+        for (const ch in h.keys) {
+          for (const k of h.keys[ch]) if (Math.abs(k.t - d.rel) < 1e-4) k.t = nr;
+          PF.kf.sortTrack(h.keys[ch]);
+        }
+        d.rel = nr; d.moved = true;
+        app.selKey = { id: h.id, t: u.round(h.time + nr, 4) };
+        app.changed(false);
+      }
+      return;
+    }
+    if (d.kind === 'life') {
+      const def = PF.HAZARDS[h.type], len = Math.max(0.05, snapAbs(e, xt(x)) - h.time);
+      if (def.lifeKey) { // âncora/partículas/ativador: muda a duração do próprio objeto
+        const extra = def.length(h) - h[def.lifeKey], p = def.props.find(q => q.key === def.lifeKey);
+        const v = u.round(u.clamp(len - extra, p.min, p.max), 4);
+        if (v !== h[def.lifeKey]) { h[def.lifeKey] = v; d.moved = true; app.changed(false); }
+      } else {
+        const nat = def.length(h);
+        if (len >= nat - 1e-3) { if (h.life) { delete h.life; d.moved = true; app.changed(false); } }
+        else if (h.life !== u.round(len, 4)) { h.life = u.round(len, 4); d.moved = true; app.changed(false); }
+      }
+      tl.canvas.style.cursor = 'ew-resize';
+      return;
+    }
     let nt = xt(x) - d.grab;
     nt = e.altKey ? u.round(nt, 2) : app.snapTime(nt);
     nt = u.round(u.clamp(nt, 0, app.level.duration), 4);
@@ -375,7 +621,16 @@
 
   function onUp() {
     const d = tl.drag;
-    if (d && d.kind === 'move' && d.moved) PF.app.commit();
+    if (d && d.kind === 'event' && d.moved) { // reordena e mantém o mesmo item escolhido
+      const lvl = PF.app.level, list = eventList(lvl, d.ev);
+      if (list) {
+        PF.kf.sortTrack(list);
+        if (PF.app.sel2) PF.app.sel2.i = list.indexOf(d.ref);
+      }
+      PF.panel.rebuild();
+      PF.app.commit();
+    } else if (d && (d.kind === 'key' || d.kind === 'life') && d.moved) { PF.panel.rebuild(); PF.app.commit(); }
+    else if (d && d.kind === 'move' && d.moved) PF.app.commit();
     // clique sem arrastar num bloco de uma seleção múltipla: fica só ele
     else if (d && d.kind === 'move' && !d.shift && PF.app.multi.size) PF.app.select(d.id);
     tl.drag = null;

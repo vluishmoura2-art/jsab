@@ -17,6 +17,11 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 ## Estrutura
 
 - `js/config.js` — constantes, paleta, utilitários (`PF.u`)
+- `js/anim.js` — um só sistema de keyframes para objetos, câmera e tema (`PF.ease`, `PF.EASE_OPTIONS`,
+  `PF.kf`: `sample/setKey/normTrack/normTracks/mixHex`; `PF.anim`: `normLevel`, `themeAt`, `camAt`,
+  `stepMarker`). Trilha = `[{ t, e, ...campos }]` ordenada; a curva `e` vale para o trecho que CHEGA na
+  chave (linear, instant, Sine/Quad/Cubic/Expo/Elastic/Back/Bounce in/out/inOut). Carregado antes do
+  `transform.js` (também no `vm` do servidor).
 - `js/transform.js` — matriz afim 2D (`PF.m`: `compose(x, y, rot, sx, sy, px, py)` = girar/escalar em
   volta do pivô, `mul`, `apply`, `invert`, `rotateAround`). Carregado antes de `hazards.js` (também no `vm`).
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).
@@ -162,6 +167,36 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   encaixe em ponto/borda, imagem de referência, telegrafia do caminho.
   Com BPM, perigos novos nascem na batida (encaixe) e os blocos mostram "c3 b2" (compasso/batida);
   a preferência do encaixe fica em `localStorage['pulsefield.snap']`.
+
+  Camada de animação (genérica, vale para qualquer tipo; só grava no JSON o que foi usado, então
+  fases antigas não mudam): `h.keys = { pos:[{t,e,x,y}], rot:[{t,e,v}], scl:[{t,e,x,y}] (%), col:[{t,e,c}] }`
+  com `t` relativo a `h.time`; posição soma à base, rotação/escala em volta da origem (`x+ox, y+oy`;
+  Forma/Grupo/Prefab usam o próprio pivô x,y). `h.life` (s, corta o bloco; Âncora/Partículas/Ativador
+  usam `dur` via `def.lifeKey`). Parentesco `h.parent` (id, só no topo), `pin` (bits 1 pos, 2 rot,
+  4 escala), `pdelay` (s); o pai entra com keyframes + comportamentos (`frameMatrix`, cache por quadro,
+  ciclos barrados por `wouldCycle` e profundidade 8). Tudo em `PF.hz.collect` → `localShapes` +
+  `xformAff` (escala diferente em X/Y vira polígono/linhas); colisão, levelCheck e servidor seguem.
+  Itens de grupo também aceitam keys/life (sem pai). Mapa: gizmo e alças ficam onde o objeto está
+  (`worldMatrix`, mouse → `toLocal`); com chaves de posição e agulha dentro do bloco, arrastar grava a
+  chave na agulha. `PF.hz.shapeEvents` tira `keys` da assinatura do cache (senão fica lento).
+  Novos tipos: `anchor` (vazio, para parentesco), `emitter` (partículas puras do tempo, `hurt` opcional,
+  máx. 400 vivas), `activator` (zona; quando = entra/sai (teste) ou no início (fixo); ação = tremer,
+  clarão, checkpoint, sumir `targets`; "no início + sumir" vale em todo lugar via `killTimes`, o resto
+  só no teste com `PF.hz.setKills`), `prefab` (`ref` → `level.prefabs[{id,name,group}]`; editar abre
+  um grupo com `prefabOf/pRot/pScale`, "Salvar no prefab" atualiza todas as cópias; `PF.mass.*Prefab`).
+  Fase: `markers [{t,name,color,desc}]` (régua; M, `[ ]`), `checkpoints [{t,x,y}]` (J; no teste sem
+  vidas volta ao último passado com vidas cheias), `cam {pos,zoom,rot,shake}` (vale tocando e no teste;
+  parado = moldura azul; no teste o jogador fica dentro da vista), `theme [{t,e,bg,hz,pl,ui}]`
+  (`PF.THEMES` prontos), `bg` (até 6 camadas parallax: grade, pontos, anéis, listras, estrelas,
+  losangos; `depth`, rolagem, pulsar na batida, janela de tempo). Seleção fora dos perigos:
+  `app.sel2 = { kind: marker|cp|cam|theme, i, ch }`; `app.selKey = { id, t }` (losango na timeline;
+  Delete apaga). Timeline: faixas `ctrl` (Âncora/fx) e `events` (câmera/tema/cp; duplo clique cria
+  cp), altura das faixas encolhe até 15 px para caberem; marcadores na régua (duplo clique cria);
+  losangos de keyframe no bloco selecionado (arrastar move as chaves daquele tempo); borda direita do
+  bloco selecionado muda o tempo de vida. Painel: Keyframes, Parentesco, Origem, "Some depois de";
+  seleção múltipla ganha "Propriedades em comum" (em branco = valores diferentes); painel da fase
+  ganha Marcadores, Checkpoints, Câmera, Tema, Fundo (parallax), Prefabs (seções recolhíveis).
+  Teclas novas: A âncora, E partículas, X ativador, K keyframe (Shift: pos+rot+escala).
 
   Interface: cantos chanfrados (`.pf-btn`, `.pf-chamfer`), tokens de cor em `:root` no `style.css`,
   ícones SVG (sem emojis), barra lateral agrupada por comportamento (Projétil, Zona, Corpo, Clima).

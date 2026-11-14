@@ -6,7 +6,12 @@
   const S = PF.storage = {
     blank() {
       // bpm 0 = sem grade de batidas; offset = tempo (s) da 1ª batida; beatsPerBar = batidas por compasso
-      return { format: 'pulsefield-level', version: PF.VERSION, name: 'Nova fase', duration: 30, bpm: 0, offset: 0, beatsPerBar: 4, spawn: { x: 320, y: 360 }, hazards: [] };
+      // markers: marcadores da timeline; checkpoints: onde o jogador volta; cam/theme: trilhas de
+      // keyframes da câmera e do tema; bg: camadas do fundo (parallax); prefabs: grupos reutilizáveis
+      return {
+        format: 'pulsefield-level', version: PF.VERSION, name: 'Nova fase', duration: 30, bpm: 0, offset: 0, beatsPerBar: 4,
+        spawn: { x: 320, y: 360 }, hazards: [], markers: [], checkpoints: [], cam: {}, theme: [], bg: [], prefabs: [],
+      };
     },
 
     demo() {
@@ -49,6 +54,18 @@
         }
       }
       PF.hz.syncIds(lvl.hazards);
+      PF.anim.normLevel(raw, lvl);
+      if (Array.isArray(raw.prefabs)) {
+        const seen = new Set();
+        for (const p of raw.prefabs.slice(0, 32)) {
+          if (!p || !Number.isInteger(p.id) || p.id <= 0 || seen.has(p.id)) continue;
+          const g = PF.hz.normalize({ ...(p.group || {}), type: 'group', x: 0, y: 0, time: 0 });
+          if (!g || !g.items.length) continue;
+          delete g.id; delete g.prefabOf; delete g.pRot; delete g.pScale;
+          seen.add(p.id);
+          lvl.prefabs.push({ id: p.id, name: (typeof p.name === 'string' ? p.name.slice(0, 40) : '') || 'Prefab ' + p.id, group: g });
+        }
+      }
       return lvl;
     },
 

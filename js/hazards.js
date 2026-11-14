@@ -976,7 +976,11 @@
   // transformações; espelhos; e até quando vão os filhos (para o tamanho do bloco).
   const evCache = new WeakMap();
   function shapeEvents(h) {
+    // keyframes não mudam os eventos: ficam fora da assinatura (trilhas longas deixariam isto lento)
+    const keys = h.keys;
+    if (keys) h.keys = undefined;
     let sig = JSON.stringify(h) + '|' + BEAT + '|' + OFFSET;
+    if (keys) h.keys = keys;
     if ((h.triggers || []).some(isReactive)) { // disparos reativos mudam os eventos
       sig += inGroup ? '|G' : REACT ? '|R' + (h.triggers || []).map((t, i) => REACT.get(h.id + ':' + i)).join(',')
         : PF.hz.preview ? '|P' + SPAWN.x + ',' + SPAWN.y : '|-';
@@ -1309,7 +1313,7 @@
     }
     return o;
   }
-  const itemLen = it => { const d = PF.HAZARDS[it.type]; return it.time + d.length(it); };
+  const itemLen = it => it.time + lifeLen(it);
 
   PF.HAZARDS.group = {
     label: 'Grupo',
@@ -1330,6 +1334,11 @@
     ],
     extra(raw, h, depth) {
       h.behaviors = normBehaviors(raw.behaviors);
+      if (!depth && Number.isInteger(raw.prefabOf) && raw.prefabOf > 0) { // conteúdo de prefab aberto para editar
+        h.prefabOf = raw.prefabOf;
+        h.pRot = u.clamp(Number(raw.pRot) || 0, -360, 360);
+        h.pScale = u.clamp(Number(raw.pScale) || 100, 5, 500);
+      }
       h.items = [];
       if (Array.isArray(raw.items) && depth < MAX_DEPTH) {
         for (const r of raw.items) {
@@ -1366,9 +1375,9 @@
           const k = Math.hypot(M[0], M[1]), rr = Math.atan2(M[1], M[0]), lti = lt - i * delay;
           for (const it of g.items) {
             const d = PF.HAZARDS[it.type], l = lti - it.time;
-            if (l < -d.lead(it) || l > d.length(it)) continue;
+            if (l < -d.lead(it) || l > lifeLen(it)) continue;
             const tmp = [];
-            d.shapes(it, l, tmp);
+            localShapes(it, l, tmp);
             for (const s of tmp) out.push(xform(s, M, k, rr));
           }
         });
@@ -1442,6 +1451,272 @@
     return out;
   }
 
+  // ---------- Âncora, partículas, ativador e prefab ----------
+  const nearPivot = (h, x, y, tol) => Math.hypot(x - h.x, y - h.y) <= Math.max(12, tol * 1.5);
+  // Objeto vazio: não desenha nada nem causa dano. Serve de pai (parentesco) para outros objetos.
+  PF.HAZARDS.anchor = {
+    label: 'Âncora',
+    desc: 'Objeto vazio: não aparece no jogo e não causa dano. Use como pai de outros objetos (Parentesco): animando a âncora com keyframes, todos os filhos andam, giram e escalam juntos em volta da origem dela.',
+    defaults: { dur: 4 },
+    props: [{ key: 'dur', label: 'Existe por', min: 0.05, max: 3600, step: 0.05, unit: 's' }],
+    lifeKey: 'dur',
+    lead: () => 0,
+    warnLen: () => 0,
+    length: h => h.dur,
+    shapes() {},
+    hit: nearPivot,
+  };
+
+  // Emissor de partículas: função pura do tempo (cada partícula nasce num instante fixo com
+  // direção/velocidade "aleatórias" fixas pelo índice). Só visual, ou com dano se escolhido.
+  const MAX_PARTICLES = 400;
+  PF.HAZARDS.emitter = {
+    label: 'Partículas',
+    desc: 'Emissor de partículas: solta partículas a cada instante durante "Emite por", na direção e abertura escolhidas, com gravidade e tamanho que muda ao longo da vida. Por padrão é só visual; em "Dano" elas passam a machucar. Keyframes e parentesco movem o emissor (as partículas já soltas seguem o emissor).',
+    defaults: { kind: 0, dur: 3, rate: 30, plife: 1.2, angle: -90, spread: 360, speed: 160, gravity: 0, size: 8, sizeEnd: 0, hurt: 0 },
+    props: [
+      { key: 'kind', label: 'Partícula', type: 'select', options: [[0, 'Círculo'], [1, 'Quadrado'], [2, 'Anel']] },
+      { key: 'dur', label: 'Emite por', min: 0.05, max: 600, step: 0.05, unit: 's' },
+      { key: 'rate', label: 'Por segundo', min: 1, max: 200, step: 1, unit: '' },
+      { key: 'plife', label: 'Vida de cada uma', min: 0.05, max: 10, step: 0.05, unit: 's' },
+      { key: 'angle', label: 'Direção (0 = →, 90 = ↓)', min: -180, max: 180, step: 1, unit: '°' },
+      { key: 'spread', label: 'Abertura', min: 0, max: 360, step: 1, unit: '°' },
+      { key: 'speed', label: 'Velocidade', min: 0, max: 2000, step: 10, unit: 'px/s' },
+      { key: 'gravity', label: 'Gravidade', min: -2000, max: 2000, step: 10, unit: 'px/s²' },
+      { key: 'size', label: 'Tamanho inicial', min: 1, max: 200, step: 1, unit: 'px' },
+      { key: 'sizeEnd', label: 'Tamanho final', min: 0, max: 200, step: 1, unit: 'px' },
+      { key: 'hurt', label: 'Dano', type: 'select', options: [[0, 'Só visual'], [1, 'Causa dano']] },
+    ],
+    lifeKey: 'dur',
+    lead: () => 0,
+    warnLen: () => 0,
+    length: h => h.dur + h.plife,
+    shapes(h, lt, out) {
+      if (lt < 0) return;
+      const last = Math.floor(Math.min(lt, h.dur) * h.rate);
+      const first = Math.max(0, Math.ceil((lt - h.plife) * h.rate), last - MAX_PARTICLES);
+      const seed = (h.id % 997) + 0.5;
+      for (let i = first; i <= last; i++) {
+        const age = lt - i / h.rate;
+        if (age < 0 || age > h.plife) continue;
+        const a = (h.angle + (rnd(i, seed) - 0.5) * h.spread) * D2R;
+        const v = h.speed * (0.55 + 0.45 * rnd(i, seed + 3.1));
+        const x = h.x + Math.cos(a) * v * age;
+        const y = h.y + Math.sin(a) * v * age + 0.5 * h.gravity * age * age;
+        const f = age / h.plife, r = Math.max(0.1, (h.size + (h.sizeEnd - h.size) * f) / 2);
+        const base = h.hurt ? { state: 'active', alpha: 1 } : { state: 'fx', alpha: 1 - f };
+        if (h.kind === 1) out.push({ ...base, kind: 'rect', x, y, w: r * 2, h: r * 2, rot: a + age * 3, solid: 1 });
+        else if (h.kind === 2) out.push({ ...base, kind: 'ring', x, y, r, w: Math.max(1, r * 0.35) });
+        else out.push({ ...base, kind: 'circle', x, y, r });
+      }
+    },
+    hit: nearPivot,
+  };
+
+  // Ativador: zona retangular. Quando o jogador entra/sai (no teste) ou num tempo fixo, faz uma
+  // ação: tremer a câmera, clarão, checkpoint ali ou sumir objetos (ids). Não desenha nada no jogo.
+  const ACT_ENTER = 0, ACT_LEAVE = 1, ACT_TIME = 2;
+  const ACT_SHAKE = 0, ACT_FLASH = 1, ACT_CP = 2, ACT_KILL = 3;
+  PF.HAZARDS.activator = {
+    label: 'Ativador',
+    desc: 'Zona invisível que dispara uma ação. Condição: o jogador entra na zona, sai dela (só no teste) ou no início do bloco (tempo fixo, vale também no editor). Ações: tremer a câmera, clarão na tela, checkpoint no centro da zona, ou sumir objetos (pelos números #id). A zona só vale durante o bloco na timeline.',
+    defaults: { w: 240, h: 240, dur: 4, cond: ACT_ENTER, action: ACT_SHAKE, amount: 12, fxTime: 0.4, targets: [] },
+    props: [
+      { key: 'w', label: 'Largura da zona', min: 8, max: 3000, step: 1, unit: 'px' },
+      { key: 'h', label: 'Altura da zona', min: 8, max: 3000, step: 1, unit: 'px' },
+      { key: 'dur', label: 'Vale por', min: 0.05, max: 3600, step: 0.05, unit: 's' },
+      { key: 'cond', label: 'Quando', type: 'select', rebuild: true, options: [[ACT_ENTER, 'Jogador entra'], [ACT_LEAVE, 'Jogador sai'], [ACT_TIME, 'No início (tempo)']] },
+      { key: 'action', label: 'Ação', type: 'select', rebuild: true, options: [[ACT_SHAKE, 'Tremer a câmera'], [ACT_FLASH, 'Clarão'], [ACT_CP, 'Checkpoint aqui'], [ACT_KILL, 'Sumir objetos']] },
+      { key: 'amount', label: 'Força', min: 1, max: 100, step: 1, unit: '', show: h => h.action === ACT_SHAKE || h.action === ACT_FLASH },
+      { key: 'fxTime', label: 'Duração do efeito', min: 0.05, max: 5, step: 0.05, unit: 's', show: h => h.action === ACT_SHAKE || h.action === ACT_FLASH },
+    ],
+    extra(raw, h) {
+      h.targets = [];
+      if (Array.isArray(raw.targets)) for (const v of raw.targets) if (Number.isInteger(v) && v > 0 && h.targets.length < 32 && !h.targets.includes(v)) h.targets.push(v);
+    },
+    lifeKey: 'dur',
+    lead: () => 0,
+    warnLen: () => 0,
+    length: h => h.dur,
+    shapes() {},
+    hit: (h, x, y, tol) => Math.abs(x - h.x) <= h.w / 2 + tol && Math.abs(y - h.y) <= h.h / 2 + tol,
+  };
+
+  // Prefab: cópia vinculada de um grupo guardado na fase (level.prefabs). Editar o prefab muda
+  // todas as cópias. A cópia tem posição, tempo, rotação e escala próprias.
+  let PREFABS = new Map();
+  function prefabGroup(h) {
+    const P = PREFABS.get(h.ref);
+    if (!P || !P.group) return null;
+    const g = P.group;
+    return { ...g, id: h.id, x: h.x, y: h.y, time: h.time, rot: g.rot + h.rot, scale: g.scale * h.scale / 100 };
+  }
+  PF.HAZARDS.prefab = {
+    label: 'Prefab',
+    desc: 'Cópia vinculada de um prefab da fase. Todas as cópias mostram o mesmo conteúdo: "Editar prefab" abre o conteúdo como grupo e "Salvar no prefab" atualiza todas as cópias. Cada cópia tem sua posição, tempo, rotação e escala.',
+    defaults: { ref: 0, rot: 0, scale: 100 },
+    props: [
+      { key: 'rot', label: 'Rotação', min: -360, max: 360, step: 1, unit: '°' },
+      { key: 'scale', label: 'Escala', min: 5, max: 500, step: 1, unit: '%' },
+    ],
+    extra(raw, h) { h.ref = Number.isInteger(raw.ref) && raw.ref > 0 ? raw.ref : 0; },
+    lead: () => 0,
+    warnLen: () => 0,
+    length(h) { const g = prefabGroup(h); return g ? Math.max(0.05, PF.HAZARDS.group.length(g)) : 0.5; },
+    shapes(h, lt, out) { const g = prefabGroup(h); if (g) PF.HAZARDS.group.shapes(g, lt, out); },
+    hit(h, x, y, tol) { const g = prefabGroup(h); return g ? PF.HAZARDS.group.hit(g, x, y, tol) : nearPivot(h, x, y, tol); },
+  };
+
+  // ---------- camada genérica: keyframes, parentesco, tempo de vida ----------
+  // Vale para qualquer tipo: as formas de saída são levadas pela matriz da animação do objeto
+  // (posição/rotação/escala em volta da origem) e, se tiver pai, pela do pai. Continua sendo
+  // função pura do tempo, então colisão, levelCheck e servidor seguem iguais.
+  const KF = PF.KF_CHANNELS;
+  const lifeLen = h => {
+    const d = PF.HAZARDS[h.type], n = d.length(h);
+    return h.life > 0 ? Math.min(n, h.life) : n;
+  };
+  const originOf = h => [h.x + (h.ox || 0), h.y + (h.oy || 0)];
+  // estado dos keyframes no tempo local lt
+  function animState(h, lt) {
+    const k = h.keys;
+    let dx = 0, dy = 0, r = 0, sx = 1, sy = 1;
+    if (k) {
+      const p = k.pos && PF.kf.sample(k.pos, lt, KF.pos.fields);
+      if (p) { dx = p.x; dy = p.y; }
+      const q = k.rot && PF.kf.sample(k.rot, lt, KF.rot.fields);
+      if (q) r = q.v;
+      const s = k.scl && PF.kf.sample(k.scl, lt, KF.scl.fields);
+      if (s) { sx = s.x / 100; sy = s.y / 100; }
+    }
+    return { dx, dy, r, sx, sy };
+  }
+  function animMatrix(h, lt) {
+    if (!h.keys) return null;
+    const s = animState(h, lt);
+    if (!s.dx && !s.dy && !s.r && s.sx === 1 && s.sy === 1) return null;
+    const [ox, oy] = originOf(h);
+    return PF.m.compose(ox + s.dx, oy + s.dy, s.r, s.sx, s.sy, ox, oy);
+  }
+  const animColor = (h, lt) => {
+    const c = h.keys && h.keys.col && PF.kf.sample(h.keys.col, lt, KF.col.fields);
+    return c ? c.c : null;
+  };
+  // movimento dos comportamentos (Forma/Grupo) como matriz em volta do pivô — para os filhos
+  function behaviorMatrix(h, lt) {
+    if (h.type === 'shape') {
+      if (!h.behaviors.length && !h.triggers.length) return null;
+      const bt = u.clamp(lt - h.warn, 0, PF.hz.shapeEnd(h));
+      const p = livePose(h, shapeEvents(h), bt);
+      return PF.m.compose(p.x, p.y, p.rot - h.rot, p.s, p.s, h.x, h.y);
+    }
+    if (h.type === 'group' && h.behaviors.length) {
+      const p = groupPose(h, lt);
+      return PF.m.compose(p.x, p.y, p.rot - h.rot, p.s, p.s, h.x, h.y);
+    }
+    return null;
+  }
+  let LEVEL = null, BYID = null;
+  const FRAME = new Map(); // cache das matrizes dos pais por quadro (id@tempo)
+  function byId(id) {
+    if (!LEVEL) return null;
+    if (!BYID) { BYID = new Map(); for (const h of LEVEL.hazards) BYID.set(h.id, h); }
+    return BYID.get(id) || null;
+  }
+  // como o "quadro" do objeto P se mexeu no tempo t (pai · keyframes · comportamentos)
+  function frameMatrix(P, t, depth) {
+    const key = P.id + '@' + t;
+    if (FRAME.has(key)) return FRAME.get(key);
+    const lt = u.clamp(t - P.time, 0, lifeLen(P));
+    let M = animMatrix(P, lt);
+    const B = behaviorMatrix(P, lt);
+    if (B) M = M ? PF.m.mul(M, B) : B;
+    const Pm = parentMatrix(P, t, depth + 1);
+    if (Pm) M = M ? PF.m.mul(Pm, M) : Pm;
+    if (FRAME.size > 4000) FRAME.clear();
+    FRAME.set(key, M);
+    return M;
+  }
+  // matriz herdada do pai, só com o que o filho herda (pin: 1 posição, 2 rotação, 4 escala)
+  function parentMatrix(h, t, depth = 0) {
+    if (!h.parent || depth > 8) return null;
+    const P = byId(h.parent);
+    if (!P || P === h) return null;
+    const Wm = frameMatrix(P, t - (h.pdelay || 0), depth);
+    if (!Wm) return null;
+    const pin = h.pin == null ? 7 : h.pin;
+    if (pin === 7) return Wm;
+    const [ox, oy] = originOf(P);
+    const [px, py] = PF.m.apply(Wm, ox, oy);
+    const sx = Math.hypot(Wm[0], Wm[1]), det = Wm[0] * Wm[3] - Wm[1] * Wm[2], sy = sx ? det / sx : 1;
+    const rot = Math.atan2(Wm[1], Wm[0]) / D2R;
+    return PF.m.compose(pin & 1 ? px : ox, pin & 1 ? py : oy, pin & 2 ? rot : 0, pin & 4 ? sx : 1, pin & 4 ? sy : 1, ox, oy);
+  }
+  // matriz completa do objeto no mundo no tempo t (keyframes + pai); null = parado
+  function worldMatrix(h, t) {
+    const lt = u.clamp(t - h.time, 0, lifeLen(h));
+    let M = animMatrix(h, lt);
+    const Pm = parentMatrix(h, t);
+    if (Pm) M = M ? PF.m.mul(Pm, M) : Pm;
+    return M;
+  }
+  // leva uma forma de saída por uma matriz afim qualquer (escala diferente em X e Y vira polígono)
+  function xformAff(s, M, out) {
+    const sx = Math.hypot(M[0], M[1]), sy = Math.hypot(M[2], M[3]);
+    if (Math.abs(sx - sy) <= 1e-3 * Math.max(1, sx)) { out.push(xform(s, M, sx, Math.atan2(M[1], M[0]))); return; }
+    const k = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
+    const ap = (x, y) => PF.m.apply(M, x, y);
+    if (s.kind === 'line') {
+      const o = { ...s };
+      [o.x1, o.y1] = ap(s.x1, s.y1); [o.x2, o.y2] = ap(s.x2, s.y2); o.w = s.w * k;
+      out.push(o);
+    } else if (s.kind === 'poly') {
+      const q = [];
+      for (let i = 0; i < s.pts.length; i += 2) q.push(...ap(s.pts[i], s.pts[i + 1]));
+      out.push({ ...s, pts: q });
+    } else if (s.kind === 'circle' || s.kind === 'ring') {
+      const n = 24, q = [];
+      for (let i = 0; i < n; i++) { const a = TAU * i / n; q.push(...ap(s.x + Math.cos(a) * s.r, s.y + Math.sin(a) * s.r)); }
+      if (s.kind === 'circle') { out.push({ ...s, kind: 'poly', pts: q }); return; }
+      for (let i = 0; i < n; i++) { // anel achatado: contorno feito de linhas
+        const j = (i + 1) % n;
+        out.push({ state: s.state, alpha: s.alpha, col: s.col, kind: 'line', x1: q[i * 2], y1: q[i * 2 + 1], x2: q[j * 2], y2: q[j * 2 + 1], w: s.w * k });
+      }
+    } else if (s.kind === 'rect') {
+      const c = Math.cos(s.rot || 0), n = Math.sin(s.rot || 0), q = [];
+      for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const lx = a * s.w / 2, ly = b * s.h / 2;
+        q.push(...ap(s.x + lx * c - ly * n, s.y + lx * n + ly * c));
+      }
+      out.push({ ...s, kind: 'poly', pts: q });
+    } else out.push(s);
+  }
+  // formas do objeto no tempo local lt com keyframes e cor; M0 = matriz extra (pai) por fora
+  function localShapes(h, lt, out, M0) {
+    const d = PF.HAZARDS[h.type];
+    if (!h.keys && !M0) { d.shapes(h, lt, out); return; }
+    const tmp = [];
+    d.shapes(h, lt, tmp);
+    let M = animMatrix(h, lt);
+    if (M0) M = M ? PF.m.mul(M0, M) : M0;
+    const col = animColor(h, lt);
+    for (const s of tmp) {
+      if (col) s.col = col;
+      if (M) xformAff(s, M, out); else out.push(s);
+    }
+  }
+  // despawn: ativadores "no início" com "sumir objetos" (fixo) + disparos do teste (KILLS)
+  let KILLS = null;
+  function killTimes(level) {
+    let m = null;
+    for (const h of level.hazards) {
+      if (h.type !== 'activator' || h.action !== ACT_KILL || h.cond !== ACT_TIME) continue;
+      for (const id of h.targets) { m = m || new Map(); if (!m.has(id) || m.get(id) > h.time) m.set(id, h.time); }
+    }
+    if (KILLS) for (const [id, at] of KILLS) { m = m || new Map(); if (!m.has(id) || m.get(id) > at) m.set(id, at); }
+    return m;
+  }
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
@@ -1509,6 +1784,56 @@
       if (level && level.spawn) SPAWN = level.spawn;
       BEAT = level && level.bpm > 0 ? 60 / level.bpm : 0.5;
       OFFSET = level && level.bpm > 0 ? level.offset || 0 : 0;
+      if (level && level !== LEVEL) { LEVEL = level; BYID = null; FRAME.clear(); }
+      if (level) {
+        const pf = level.prefabs || [];
+        if (pf !== PREFABS.src) { PREFABS = new Map(pf.map(p => [p.id, p])); PREFABS.src = pf; }
+      }
+    },
+    // ---- camada genérica (keyframes, parentesco, tempo de vida) ----
+    lifeLen,
+    animState,
+    animMatrix,
+    animColor,
+    worldMatrix: (level, h, t) => { PF.hz.setBeat(level); BYID = null; FRAME.clear(); return worldMatrix(h, t); },
+    parentOf: (level, h) => (h.parent ? level.hazards.find(z => z.id === h.parent) || null : null),
+    // true se pôr "pid" como pai de h criaria um ciclo
+    wouldCycle(level, h, pid) {
+      let id = pid;
+      for (let i = 0; i < 64 && id; i++) {
+        if (id === h.id) return true;
+        const p = level.hazards.find(z => z.id === id);
+        id = p ? p.parent : 0;
+      }
+      return false;
+    },
+    // clique no objeto onde ele aparece agora (keyframes/pai) ou onde ele fica parado
+    hitAt(level, h, x, y, tol, t) {
+      const d = PF.HAZARDS[h.type];
+      if (d.hit(h, x, y, tol)) return true;
+      if (!h.keys && !h.parent) return false;
+      const M = PF.hz.worldMatrix(level, h, t);
+      if (!M) return false;
+      const k = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2])) || 1;
+      const [lx, ly] = PF.m.apply(PF.m.invert(M), x, y);
+      return d.hit(h, lx, ly, tol / k);
+    },
+    prefabGroup,
+    setKills(map) { KILLS = map; },
+    getKills: () => KILLS,
+    ACT: { ENTER: ACT_ENTER, LEAVE: ACT_LEAVE, TIME: ACT_TIME, SHAKE: ACT_SHAKE, FLASH: ACT_FLASH, CP: ACT_CP, KILL: ACT_KILL },
+    // efeitos de tela dos ativadores "no início" (fixos no tempo): tremor e clarão
+    timeFx(level, t) {
+      let shake = 0, flash = 0;
+      for (const h of level.hazards) {
+        if (h.type !== 'activator' || h.cond !== ACT_TIME || (h.action !== ACT_SHAKE && h.action !== ACT_FLASH)) continue;
+        const a = t - h.time;
+        if (a < 0 || a > h.fxTime) continue;
+        const f = 1 - a / h.fxTime;
+        if (h.action === ACT_SHAKE) shake = Math.max(shake, h.amount * f);
+        else flash = Math.max(flash, h.amount / 100 * f);
+      }
+      return { shake, flash };
     },
     curvePos,
     curveRun,
@@ -1520,15 +1845,19 @@
     clone(h) { return { ...JSON.parse(JSON.stringify(h)), id: seq++ }; },
     window(h) {
       const d = PF.HAZARDS[h.type];
-      return [h.time - d.lead(h), h.time + d.length(h)];
+      return [h.time - d.lead(h), h.time + lifeLen(h)];
     },
     collect(level, t, out = []) {
       PF.hz.setBeat(level);
+      BYID = null;
+      FRAME.clear();
+      const kills = killTimes(level);
       for (const h of level.hazards) {
         const d = PF.HAZARDS[h.type];
         const lt = t - h.time;
-        if (lt < -d.lead(h) || lt > d.length(h)) continue;
-        d.shapes(h, lt, out);
+        if (lt < -d.lead(h) || lt > lifeLen(h)) continue;
+        if (kills && kills.has(h.id) && t >= kills.get(h.id)) continue;
+        localShapes(h, lt, out, h.parent ? parentMatrix(h, t) : null);
       }
       return out;
     },
@@ -1569,6 +1898,23 @@
       };
       for (const p of def.props) h[p.key] = normProp(raw, p, def.defaults[p.key]);
       if (def.extra) def.extra(raw, h, depth); // dados além dos props (comportamentos, itens do grupo…)
+      // camada genérica: só grava o que foi usado (o JSON das fases antigas não muda)
+      const keys = PF.kf.normTracks(raw.keys, KF);
+      if (keys) h.keys = keys;
+      const life = num(raw.life, 0);
+      if (life > 0 && !def.lifeKey) h.life = u.round(u.clamp(life, 0.05, 3600), 4);
+      if (h.type !== 'shape' && h.type !== 'group' && h.type !== 'prefab') { // Forma/Grupo já têm pivô
+        const ox = u.clamp(num(raw.ox, 0), -2000, 2000), oy = u.clamp(num(raw.oy, 0), -2000, 2000);
+        if (ox) h.ox = u.round(ox, 2);
+        if (oy) h.oy = u.round(oy, 2);
+      }
+      if (!depth && Number.isInteger(raw.parent) && raw.parent > 0 && raw.parent !== h.id) {
+        h.parent = raw.parent;
+        const pin = Number(raw.pin);
+        h.pin = Number.isInteger(pin) && pin >= 0 && pin <= 7 ? pin : 7;
+        const pd = num(raw.pdelay, 0);
+        if (pd > 0) h.pdelay = u.round(u.clamp(pd, 0, 10), 3);
+      }
       return h;
     },
     // Garante ids únicos e ajusta o contador.

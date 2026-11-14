@@ -24,7 +24,77 @@
       return this.level.hazards.filter(h => ids.has(h.id));
     },
 
-    select(id) { this.selectedId = id; this.multi.clear(); this.spawnSelected = false; this.vtx = null; PF.panel.refresh(); },
+    select(id) { this.selectedId = id; this.multi.clear(); this.spawnSelected = false; this.vtx = null; this.sel2 = null; this.selKey = null; PF.panel.refresh(); },
+    // item da fase escolhido fora dos perigos: { kind: 'marker' | 'cp' | 'cam' | 'theme', i, ch }
+    sel2: null,
+    selKey: null, // keyframe escolhido na timeline: { id, t (absoluto) }
+    selectEvent(kind, i, ch) {
+      this.selectedId = null; this.multi.clear(); this.spawnSelected = false; this.vtx = null; this.selKey = null;
+      this.sel2 = { kind, i, ch };
+      PF.panel.refresh();
+    },
+    addMarker(t = this.t) {
+      if (this.editLevel) return;
+      const ms = this.level.markers;
+      const m = { t: u.round(u.clamp(t, 0, this.level.duration), 4), name: 'Marcador ' + (ms.length + 1), color: '#7CFFB2', desc: '' };
+      ms.push(m);
+      PF.kf.sortTrack(ms);
+      this.selectEvent('marker', ms.indexOf(m));
+      this.commit();
+    },
+    addCheckpoint(t = this.t) {
+      if (this.editLevel) return;
+      const cs = this.level.checkpoints;
+      if (cs.length >= 64) { PF.toast('Limite de 64 checkpoints', 'info', 'cp'); return; }
+      const c = { t: u.round(u.clamp(t, 0, this.level.duration), 4), x: this.level.spawn.x, y: this.level.spawn.y };
+      cs.push(c);
+      PF.kf.sortTrack(cs);
+      this.selectEvent('cp', cs.indexOf(c));
+      this.commit();
+      PF.toast('Checkpoint em ' + c.t.toFixed(2) + ' s · arraste o losango no mapa para mudar onde o jogador volta', 'info', 'cp');
+    },
+    // K: chave na agulha nos canais que já têm chaves (nenhum = posição); all = posição, rotação e escala
+    addKeys(all) {
+      const list = this.selection();
+      if (!list.length || this.editLevel) { PF.toast('Selecione um objeto para pôr keyframes', 'info', 'kf'); return; }
+      let n = 0;
+      for (const h of list) {
+        const lt = u.round(Math.max(0, this.t - h.time), 4);
+        const chans = all ? ['pos', 'rot', 'scl'] : h.keys ? Object.keys(h.keys) : ['pos'];
+        for (const ch of chans) { PF.panel.keyAt(h, ch, lt); n++; }
+      }
+      this.selKey = list.length === 1 ? { id: list[0].id, t: u.round(list[0].time + Math.max(0, this.t - list[0].time), 4) } : null;
+      PF.panel.rebuild();
+      this.commit();
+      PF.toast(n + ' keyframe(s) na agulha · arraste o objeto no mapa para mudar o valor neste tempo', 'info', 'kf');
+    },
+    deleteEvent() {
+      const s = this.sel2, lvl = this.level;
+      if (!s) return false;
+      if (s.kind === 'marker') lvl.markers.splice(s.i, 1);
+      else if (s.kind === 'cp') lvl.checkpoints.splice(s.i, 1);
+      else if (s.kind === 'theme') lvl.theme.splice(s.i, 1);
+      else if (s.kind === 'cam' && lvl.cam[s.ch]) { lvl.cam[s.ch].splice(s.i, 1); if (!lvl.cam[s.ch].length) delete lvl.cam[s.ch]; }
+      this.sel2 = null;
+      PF.panel.rebuild();
+      this.commit();
+      return true;
+    },
+    // apaga as chaves do tempo escolhido na timeline
+    deleteKey() {
+      const k = this.selKey, h = k && this.level.hazards.find(z => z.id === k.id);
+      if (!h || !h.keys) return false;
+      const rel = k.t - h.time;
+      for (const ch of Object.keys(h.keys)) {
+        h.keys[ch] = h.keys[ch].filter(q => Math.abs(q.t - rel) >= 1e-4);
+        if (!h.keys[ch].length) delete h.keys[ch];
+      }
+      if (!Object.keys(h.keys).length) delete h.keys;
+      this.selKey = null;
+      PF.panel.rebuild();
+      this.commit();
+      return true;
+    },
     vtx: null, // ponto escolhido do caminho selecionado (Delete apaga)
     pen: null, // caneta desenhando: { id, down, free, sx, sy, lx, ly, hover }
     // soma/tira da seleção (Shift+clique)
@@ -150,6 +220,7 @@
         if (same) { c.x = u.clamp(c.x + 30, -400, W + 400); c.y = u.clamp(c.y + 30, -400, H + 400); }
         return c;
       });
+      remapParents(src, out);
       this.level.hazards.push(...out);
       this.clipboard = JSON.stringify(out); // colar de novo continua deslocando
       this.selectList(out);
@@ -165,11 +236,18 @@
         c.y = u.clamp(c.y + 30, -400, H + 400);
         return c;
       });
+      remapParents(list, out);
       this.level.hazards.push(...out);
       this.selectList(out);
       this.commit();
     },
   };
+
+  // copiou pai e filho juntos: o filho da cópia passa a seguir a cópia do pai
+  function remapParents(src, out) {
+    const map = new Map(src.map((h, i) => [h.id, out[i].id]));
+    for (const c of out) if (c.parent && map.has(c.parent)) c.parent = map.get(c.parent);
+  }
 
   // no editor, gatilhos reativos mostram uma prévia com o jogador parado no início da fase
   PF.hz.preview = true;
@@ -204,21 +282,42 @@
     const tol = 10 / view.scale;
     const list = app.level.hazards;
     const sel = app.selected();
-    if (sel && PF.HAZARDS[sel.type].hit(sel, x, y, tol)) return sel;
+    const hit = h => PF.hz.hitAt(app.level, h, x, y, tol, app.t);
+    if (sel && hit(sel)) return sel;
     const inWin = h => { const [a, b] = PF.hz.window(h); return app.t >= a && app.t <= b; };
     for (const pass of [inWin, () => true]) {
       for (let i = list.length - 1; i >= 0; i--) {
         const h = list[i];
-        if (pass(h) && PF.HAZARDS[h.type].hit(h, x, y, tol)) return h;
+        if (pass(h) && hit(h)) return h;
       }
     }
     return null;
+  }
+  // matriz do objeto agora (keyframes/pai) e o ponto do mouse levado para as coords dele
+  const objMatrix = h => (h && (h.keys || h.parent) ? PF.hz.worldMatrix(app.level, h, app.t) : null);
+  function toLocal(h, p) {
+    const M = objMatrix(h);
+    if (!M) return p;
+    const [x, y] = PF.m.apply(PF.m.invert(M), p.x, p.y);
+    return { x, y };
+  }
+  // keyframe de posição no tempo da agulha (cria/atualiza) — arrastar com chaves grava a animação
+  function posKeyAt(h) {
+    if (!h.keys || !h.keys.pos) return null;
+    const lt = u.round(Math.max(0, app.t - h.time), 4);
+    const cur = PF.kf.sample(h.keys.pos, lt, PF.KF_CHANNELS.pos.fields);
+    return PF.kf.setKey(h.keys.pos, lt, { x: u.round(cur.x, 2), y: u.round(cur.y, 2) });
+  }
+  function checkpointAt(p) {
+    const cs = app.level.checkpoints || [];
+    for (let i = cs.length - 1; i >= 0; i--) if (Math.hypot(p.x - cs[i].x, p.y - cs[i].y) <= 12) return i;
+    return -1;
   }
 
   let drag = null;
   stage.addEventListener('pointerdown', e => {
     if (app.mode !== 'edit' || e.button !== 0) return;
-    const p = toWorld(e);
+    let p = toWorld(e);
     stage.setPointerCapture(e.pointerId);
     if (app.tool === 'pen') { penDown(p); return; }
     if (app.tool !== 'select') {
@@ -231,7 +330,10 @@
       return;
     }
     // alças da Forma selecionada: giro, tamanho, e Alt+arrastar para mudar o pivô
+    // (com keyframes/pai as alças estão onde o objeto aparece: o mouse vai para as coords dele)
     const cur = app.multi.size ? null : app.selected();
+    const p0 = p;
+    if (cur && (cur.type === 'group' || cur.type === 'shape')) p = toLocal(cur, p);
     if (cur && cur.type === 'group' && !e.shiftKey) {
       const near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
       if (near(PF.groupHandles(cur, view.scale).rot)) { drag = { id: cur.id, kind: 'grot', moved: false }; return; }
@@ -275,11 +377,19 @@
         return;
       }
     }
+    p = p0;
     const sp = app.level.spawn;
     if (Math.hypot(p.x - sp.x, p.y - sp.y) <= 16) {
       app.select(null);
       app.spawnSelected = true;
       drag = { spawn: true, dx: sp.x - p.x, dy: sp.y - p.y, moved: false };
+      return;
+    }
+    const ci = checkpointAt(p);
+    if (ci >= 0) { // checkpoint: arrastar muda onde o jogador volta
+      const c = app.level.checkpoints[ci];
+      app.selectEvent('cp', ci);
+      drag = { cp: c, dx: c.x - p.x, dy: c.y - p.y, moved: false };
       return;
     }
     const h = pick(p.x, p.y);
@@ -290,7 +400,10 @@
       } else if (!app.isSelected(h.id)) app.select(h.id);
       else { app.selectedId = h.id; PF.panel.refresh(); }
       const hy = h.type === 'water' ? H - h.height : h.y; // na água a alça fica na superfície
-      drag = { id: h.id, dx: h.x - p.x, dy: hy - p.y, moved: false, shift: e.shiftKey };
+      const lp = toLocal(h, p);
+      drag = { id: h.id, dx: h.x - lp.x, dy: hy - lp.y, moved: false, shift: e.shiftKey, p0: p };
+      // com chaves de posição e a agulha dentro do bloco: arrastar grava a chave nesse tempo
+      if (h.keys && h.keys.pos && !app.multi.size) drag.useKey = app.t >= h.time && app.t <= PF.hz.window(h)[1] + 1e-6;
       if (app.multi.size) { // vários: todos andam juntos
         drag.others = app.selection().filter(z => z.id !== h.id && z.type !== 'water').map(z => ({ z, x: z.x, y: z.y }));
         drag.x0 = h.x; drag.y0 = h.y;
@@ -306,8 +419,11 @@
     if (!drag) {
       if (app.tool === 'select') {
         const sp = app.level.spawn;
-        const overSpawn = Math.hypot(p.x - sp.x, p.y - sp.y) <= 16;
-        const cur = app.multi.size ? null : app.selected();
+        const overSpawn = Math.hypot(p.x - sp.x, p.y - sp.y) <= 16 || checkpointAt(p) >= 0;
+        const cur0 = app.multi.size ? null : app.selected();
+        const cur = cur0 && (cur0.type === 'group' || cur0.type === 'shape') ? cur0 : null;
+        const pw = p;
+        { const p = cur ? toLocal(cur, pw) : pw; // alças nas coords do objeto
         if (cur && cur.type === 'group') {
           const near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
           if (near(PF.groupHandles(cur, view.scale).rot)) { stage.style.cursor = 'grab'; return; }
@@ -321,14 +437,31 @@
           if (hd.verts.some(v => near(v))) { stage.style.cursor = 'move'; return; }
           if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) { stage.style.cursor = 'crosshair'; return; }
         }
+        }
         stage.style.cursor = overSpawn || pick(p.x, p.y) ? 'move' : 'default';
       }
       return;
     }
+    if (drag.cp) {
+      let nx = p.x + drag.dx, ny = p.y + drag.dy;
+      if (e.shiftKey) { nx = Math.round(nx / 40) * 40; ny = Math.round(ny / 40) * 40; }
+      nx = u.clamp(Math.round(nx), 12, W - 12); ny = u.clamp(Math.round(ny), 12, H - 12);
+      if (nx !== drag.cp.x || ny !== drag.cp.y) { drag.cp.x = nx; drag.cp.y = ny; drag.moved = true; app.changed(false); }
+      return;
+    }
     const h = drag.spawn ? app.level.spawn : app.level.hazards.find(z => z.id === drag.id);
     if (!h) return;
-    if (drag.kind) { shapeDrag(h, p, e); return; }
-    let nx = p.x + drag.dx, ny = p.y + drag.dy;
+    if (drag.kind) { shapeDrag(h, toLocal(h, p), e); return; }
+    if (drag.useKey) { // grava a posição como keyframe no tempo da agulha
+      if (!drag.key) { drag.key = posKeyAt(h); drag.k0 = { x: drag.key.x, y: drag.key.y }; }
+      let kx = drag.k0.x + p.x - drag.p0.x, ky = drag.k0.y + p.y - drag.p0.y;
+      if (e.shiftKey) { kx = Math.round(kx / 20) * 20; ky = Math.round(ky / 20) * 20; }
+      kx = u.round(u.clamp(kx, -4000, 4000), 1); ky = u.round(u.clamp(ky, -4000, 4000), 1);
+      if (kx !== drag.key.x || ky !== drag.key.y) { drag.key.x = kx; drag.key.y = ky; drag.moved = true; app.changed(false); }
+      return;
+    }
+    const lp = drag.spawn ? p : toLocal(h, p);
+    let nx = lp.x + drag.dx, ny = lp.y + drag.dy;
     if (e.shiftKey) { nx = Math.round(nx / 40) * 40; ny = Math.round(ny / 40) * 40; }
     const m = drag.spawn ? -12 : 400; // o início do jogador fica dentro da arena
     nx = u.clamp(Math.round(nx), -m, W + m);
@@ -533,6 +666,9 @@
     pen: '<path d="M4 20l3-9 9-8 5 5-8 9z"/><path d="M7 11l6 6"/><circle cx="4" cy="20" r="1.4" fill="currentColor"/>',
     shape: '<circle cx="8" cy="8" r="5"/><path d="M12 12h9v9h-9z" fill="currentColor"/><path d="M15.5 2.5l4.5 7.5h-9z"/><path d="M3 21l6-6" stroke-width="2.6" stroke-linecap="round"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
+    anchor: '<circle cx="12" cy="12" r="5"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+    emitter: '<circle cx="7" cy="17" r="2.6" fill="currentColor"/><circle cx="14" cy="9" r="1.8" fill="currentColor" stroke="none"/><circle cx="18.5" cy="14.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="11" cy="4.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="20" cy="6" r="1" fill="currentColor" stroke="none"/><path d="M8.5 15l3-3M9.5 17.5l5-1.5" stroke-dasharray="1.5 2"/>',
+    activator: '<path d="M3 3h18v18H3z" stroke-dasharray="3 2.5"/><path d="M9 7v10M9 7h7l-2 2.5 2 2.5H9"/>',
   };
   // agrupadas por comportamento; o nome fica no tooltip, a tecla no canto
   const TOOL_GROUPS = [
@@ -557,6 +693,11 @@
     { label: 'MANUAL', tools: [
       { id: 'shape', label: 'Forma livre', key: 'F' },
       { id: 'pen', label: 'Caneta: clique = ponto, arrastar = pincel, clique no 1º ponto fecha, Enter/duplo clique termina', key: 'P' },
+    ] },
+    { label: 'CENA', tools: [
+      { id: 'anchor', label: 'Âncora (objeto vazio para parentesco)', key: 'A' },
+      { id: 'emitter', label: 'Partículas (emissor)', key: 'E' },
+      { id: 'activator', label: 'Ativador (zona que dispara uma ação)', key: 'X' },
     ] },
   ];
   const toolbar = $('toolbar');
@@ -699,9 +840,11 @@
     app.mode = 'test';
     app.t = t0;
     PF.hz.setReactive(new Map()); // gatilhos reativos começam sem disparar
+    PF.hz.setKills(new Map()); // ativadores "sumir objetos" disparados pelo jogador
     const sp = app.level.spawn;
     app.test = {
       t0, hits: 0, shake: 0, flash: 0, done: false, over: false, online: app.editLevel ? label : '',
+      lastT: t0, fx: [], cps: [], fired: new Set(), actIn: new Map(), cpMsg: 0, cpText: '', respawns: 0,
       music: app.editLevel ? withMusic : true,
       player: {
         x: sp.x, y: sp.y, hp: P.hp, dash: 0, dashCd: 0, hurt: 0, spawn: 0.6,
@@ -722,6 +865,7 @@
     app.mode = 'edit';
     app.test = null;
     PF.hz.setReactive(null); // volta para a prévia do editor
+    PF.hz.setKills(null);
     if (app.editLevel) {
       app.level = app.editLevel;
       app.editLevel = null;
@@ -768,10 +912,72 @@
     }
   }
 
+  // Ativadores no teste: zona (onde o objeto está agora) × jogador; dispara uma vez cada
+  function activators(p) {
+    const T = app.test, A = PF.hz.ACT, now = app.t, kills = PF.hz.getKills();
+    for (const h of app.level.hazards) {
+      if (h.type !== 'activator' || T.fired.has(h.id)) continue;
+      const lt = now - h.time;
+      let fire = false;
+      if (h.cond === A.TIME) fire = T.lastT < h.time && now >= h.time && h.action === A.CP; // tremor/clarão/sumir no tempo já são fixos
+      else {
+        if (lt < 0 || lt > PF.hz.lifeLen(h)) { T.actIn.delete(h.id); continue; }
+        const M = PF.hz.worldMatrix(app.level, h, now);
+        const [cx, cy] = M ? PF.m.apply(M, h.x, h.y) : [h.x, h.y];
+        const k = M ? Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2])) : 1;
+        const inside = Math.abs(p.x - cx) <= h.w * k / 2 && Math.abs(p.y - cy) <= h.h * k / 2;
+        const was = T.actIn.has(h.id) ? T.actIn.get(h.id) : null;
+        T.actIn.set(h.id, inside);
+        fire = h.cond === A.ENTER ? inside && was !== true : was === true && !inside;
+      }
+      if (!fire) continue;
+      T.fired.add(h.id);
+      if (h.action === A.SHAKE) T.fx.push({ at: now, kind: 'shake', amount: h.amount, dur: h.fxTime });
+      else if (h.action === A.FLASH) T.fx.push({ at: now, kind: 'flash', amount: h.amount, dur: h.fxTime });
+      else if (h.action === A.KILL) { for (const id of h.targets) if (!kills.has(id)) kills.set(id, now); }
+      else if (h.action === A.CP) {
+        const M = PF.hz.worldMatrix(app.level, h, now), [cx, cy] = M ? PF.m.apply(M, h.x, h.y) : [h.x, h.y];
+        T.cps.push({ t: now, x: u.clamp(cx, 12, W - 12), y: u.clamp(cy, 12, H - 12) });
+        T.cpMsg = 1.5; T.cpText = '◆ checkpoint';
+      }
+    }
+  }
+  // volta ao último checkpoint alcançado (da fase ou de um ativador), com as vidas cheias
+  function lastCheckpoint() {
+    let best = null;
+    for (const c of app.level.checkpoints || []) if (c.t <= app.t && (!best || c.t > best.t)) best = c;
+    for (const c of app.test.cps) if (c.t <= app.t && (!best || c.t >= best.t)) best = c;
+    return best;
+  }
+  function respawn(cp) {
+    const T = app.test, p = T.player;
+    app.t = cp.t;
+    T.lastT = cp.t;
+    Object.assign(p, { x: cp.x, y: cp.y, hp: P.hp, hurt: 0, dash: 0, dashCd: 0, spawn: 0.9, trail: [] });
+    T.respawns++;
+    T.fx = T.fx.filter(e => e.at <= cp.t);
+    T.fired.clear();
+    T.actIn.clear();
+    PF.hz.setReactive(new Map());
+    const kills = PF.hz.getKills();
+    for (const [id, at] of [...kills]) if (at > cp.t) kills.delete(id);
+    T.cpMsg = 1.5; T.cpText = '◆ de volta ao checkpoint';
+    if (T.music) PF.audio.play(cp.t);
+  }
+  // com câmera animada, o jogador fica dentro do que ela mostra (e dentro da arena)
+  function cameraBounds() {
+    if (!PF.anim.hasCam(app.level)) return null;
+    const q = PF.camView(app.level, app.t).corners;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of q) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return [Math.max(12, x0 + 12), Math.max(12, y0 + 12), Math.min(W - 12, x1 - 12), Math.min(H - 12, y1 - 12)];
+  }
+
   function updateTest(dt) {
     const T = app.test, p = T.player;
     T.shake = Math.max(0, T.shake - dt);
     T.flash = Math.max(0, T.flash - dt * 3);
+    T.cpMsg = Math.max(0, T.cpMsg - dt);
     p.trail.forEach(tr => { tr.a -= dt * 4; });
     p.trail = p.trail.filter(tr => tr.a > 0);
     if (T.done || T.over) return;
@@ -802,6 +1008,8 @@
       p.x += ix * P.speed * dt;
       p.y += iy * P.speed * dt;
     }
+    const cb = cameraBounds();
+    if (cb && cb[0] < cb[2] && cb[1] < cb[3]) { p.x = u.clamp(p.x, cb[0], cb[2]); p.y = u.clamp(p.y, cb[1], cb[3]); }
     p.x = u.clamp(p.x, 12, W - 12);
     p.y = u.clamp(p.y, 12, H - 12);
     p.dash = Math.max(0, p.dash - dt);
@@ -810,6 +1018,11 @@
     p.spawn = Math.max(0, p.spawn - dt);
 
     reactiveTriggers(p);
+    activators(p);
+    for (const c of app.level.checkpoints || []) {
+      if (T.lastT < c.t && app.t >= c.t) { T.cpMsg = 1.5; T.cpText = '◆ checkpoint'; }
+    }
+    T.lastT = app.t;
 
     if (p.dash <= 0 && p.hurt <= 0 && p.spawn <= 0) {
       for (const s of PF.hz.collect(app.level, app.t, [])) {
@@ -819,7 +1032,11 @@
           p.hurt = P.hurtTime;
           T.shake = 0.3;
           T.flash = 1;
-          if (p.hp <= 0) { T.over = true; PF.audio.stop(); }
+          if (p.hp <= 0) {
+            const cp = lastCheckpoint();
+            if (cp) respawn(cp);
+            else { T.over = true; PF.audio.stop(); }
+          }
           break;
         }
       }
@@ -1053,7 +1270,19 @@
       case '0': setTool('spike'); break;
       case 'c': setTool('curve'); break;
       case 'f': setTool('shape'); break;
-      case 'delete': case 'backspace': if (!deleteVertex()) app.deleteSelected(); e.preventDefault(); break;
+      case 'a': setTool('anchor'); break;
+      case 'e': setTool('emitter'); break;
+      case 'x': setTool('activator'); break;
+      case 'k': app.addKeys(e.shiftKey); break;
+      case 'm': app.addMarker(app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : app.t); break;
+      case 'j': app.addCheckpoint(app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : app.t); break;
+      case '[': case ']': {
+        const m = PF.anim.stepMarker(app.level, app.t, k === ']' ? 1 : -1);
+        if (m) { app.setTime(m.t); PF.timeline.follow(app.t); }
+        else PF.toast('Nenhum marcador ' + (k === ']' ? 'depois' : 'antes') + ' da agulha · M cria um', 'info', 'mk');
+        break;
+      }
+      case 'delete': case 'backspace': if (!deleteVertex() && !app.deleteKey() && !app.deleteEvent()) app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'g': if (e.shiftKey) cycleSnapDiv(); else toggleSnap(); break;
       case 'b': if (!e.repeat) tapTempo(); break;

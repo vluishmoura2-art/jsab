@@ -24,6 +24,7 @@ PF.C = {
   danger: '#FF4D5E',
   dangerSoft: '#FF8A95',
   accent: '#7CFFB2',
+  signal: '#4DD8FF', // som e câmera
   text: '#D8E2E4',
   muted: '#7B8D92',
 };

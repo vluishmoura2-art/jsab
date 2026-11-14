@@ -167,6 +167,16 @@ html, body { background: var(--pf-bg); }
 .pf-unit { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--pf-muted); width: 26px; }
 
 input[type=range] { accent-color: var(--pf-accent); height: 16px; cursor: pointer; }
+/* seletor de cor (keyframes de cor, tema, marcadores, fundo) */
+.pf-color {
+  width: 34px; height: 22px; padding: 1px;
+  background: var(--pf-void); border: 1px solid var(--pf-line); cursor: pointer;
+}
+.pf-color:hover { border-color: var(--pf-line-hi); }
+.pf-color::-webkit-color-swatch-wrapper { padding: 0; }
+.pf-color::-webkit-color-swatch { border: 0; }
+.pf-color::-moz-color-swatch { border: 0; }
+textarea.pf-text { resize: vertical; font-family: "Space Grotesk", system-ui, sans-serif; }
 
 /* cartão de comportamento no painel */
 .pf-card {

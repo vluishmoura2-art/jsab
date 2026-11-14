@@ -3,11 +3,25 @@
   const { W, H, C, u } = PF;
   const TAU = Math.PI * 2;
   const ORDER = { warn: 0, fx: 1, active: 2 };
+  const mix = (a, b, p) => PF.kf.mixHex(a, b, p);
+
+  // cores do tema no quadro atual (tema dinâmico da fase)
+  const COL = { bg: C.bg, hz: C.danger, hzSoft: C.dangerSoft, pl: C.player, ui: C.accent, head: '#FFD3DA', light: '#FF7483' };
+  function setTheme(th) {
+    if (COL.src === th) return;
+    COL.src = th;
+    COL.bg = th.bg; COL.hz = th.hz; COL.pl = th.pl; COL.ui = th.ui;
+    COL.hzSoft = mix(th.hz, '#FFFFFF', 0.35);
+    COL.head = mix(th.hz, '#FFFFFF', 0.78);
+    COL.light = mix(th.hz, '#FFFFFF', 0.18);
+    COL.grid = PF.kf.rgba(th.ui, 0.045);
+    COL.void = mix(th.bg, '#000000', 0.45);
+  }
 
   function background(ctx) {
-    ctx.fillStyle = C.bg;
+    ctx.fillStyle = COL.bg;
     ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(124,255,178,0.045)';
+    ctx.strokeStyle = COL.grid || 'rgba(124,255,178,0.045)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = 80; x < W; x += 80) { ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); }
@@ -15,13 +29,72 @@
     ctx.stroke();
   }
 
+  // Camadas do fundo com parallax: profundidade 0 = presa à tela, 100% = anda junto com a arena.
+  // off: deslocamento da câmera (o fundo anda menos que ela conforme a profundidade)
+  function rnd(i, s) { const v = Math.sin(i * 127.1 + s * 311.7) * 43758.5453; return v - Math.floor(v); }
+  function bgLayers(ctx, level, t, cam) {
+    const list = level.bg;
+    if (!list || !list.length) return;
+    const beat = level.bpm > 0 ? 60 / level.bpm : 0;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+    list.forEach((L, li) => {
+      if (t < L.from || (L.to > 0 && t > L.to)) return;
+      const d = 1 - L.depth / 100; // quanto o fundo "fica para trás" da câmera
+      let k = 1;
+      if (L.pulse && beat) k = 1 + L.pulse / 100 * Math.exp(-(((t - level.offset) / beat % 1 + 1) % 1) * 6);
+      const sz = L.size * k;
+      const ox = cam.x * d + L.sx * t, oy = cam.y * d + L.sy * t;
+      const x0 = ((ox % sz) + sz) % sz, y0 = ((oy % sz) + sz) % sz;
+      ctx.globalAlpha = L.alpha / 100;
+      ctx.strokeStyle = ctx.fillStyle = L.color;
+      ctx.lineWidth = L.thick;
+      ctx.beginPath();
+      if (L.kind === 0) { // grade
+        for (let x = x0 - sz; x < W + sz; x += sz) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+        for (let y = y0 - sz; y < H + sz; y += sz) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+        ctx.stroke();
+      } else if (L.kind === 1 || L.kind === 5) { // pontos / losangos
+        const r = Math.max(0.5, L.thick);
+        for (let x = x0 - sz; x < W + sz; x += sz) {
+          for (let y = y0 - sz; y < H + sz; y += sz) {
+            if (L.kind === 1) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, TAU); }
+            else { const q = r * 2.5; ctx.moveTo(x, y - q); ctx.lineTo(x + q, y); ctx.lineTo(x, y + q); ctx.lineTo(x - q, y); ctx.closePath(); }
+          }
+        }
+        ctx.fill();
+      } else if (L.kind === 2) { // anéis concêntricos em volta do centro
+        const cx = W / 2 - cam.x * d, cy = H / 2 - cam.y * d, ph = ((L.sx + L.sy) * t % sz + sz) % sz;
+        for (let r = ph; r < Math.hypot(W, H); r += sz) { ctx.moveTo(cx + r, cy); ctx.arc(cx, cy, r, 0, TAU); }
+        ctx.stroke();
+      } else if (L.kind === 3) { // listras diagonais
+        for (let x = x0 - H - sz; x < W + sz; x += sz) { ctx.moveTo(x, 0); ctx.lineTo(x + H, H); }
+        ctx.stroke();
+      } else { // estrelas: pontos fixos, repetidos em blocos de 4×4 células
+        const cell = sz * 4, bx = ((ox % cell) + cell) % cell, by = ((oy % cell) + cell) % cell;
+        for (let gx = -1; gx * cell < W + cell; gx++) {
+          for (let gy = -1; gy * cell < H + cell; gy++) {
+            for (let i = 0; i < 12; i++) {
+              const x = gx * cell + bx + rnd(i, li + 1) * cell, y = gy * cell + by + rnd(i, li + 7.7) * cell;
+              const r = Math.max(0.4, L.thick * (0.4 + rnd(i, li + 3.3)));
+              ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, TAU);
+            }
+          }
+        }
+        ctx.fill();
+      }
+    });
+    ctx.restore();
+  }
+
   function drawShape(ctx, s) {
     ctx.save();
     ctx.globalAlpha = u.clamp(s.alpha, 0, 1);
-    const color = s.state === 'fx' ? C.dangerSoft : C.danger;
+    const base = s.col || COL.hz;
+    const color = s.state === 'fx' ? (s.col ? mix(s.col, '#FFFFFF', 0.35) : COL.hzSoft) : base;
     ctx.fillStyle = color;
     ctx.strokeStyle = color;
-    if (s.state === 'active') { ctx.shadowColor = C.danger; ctx.shadowBlur = 16; }
+    if (s.state === 'active') { ctx.shadowColor = base; ctx.shadowBlur = 16; }
     if (s.dashed) ctx.setLineDash([8, 8]);
 
     if (s.kind === 'circle') {
@@ -41,7 +114,7 @@
       ctx.stroke();
       if (s.core && s.r > s.w / 2) { // miolo escuro: o brilho não "enche" o anel
         ctx.shadowBlur = 0;
-        ctx.fillStyle = C.bg;
+        ctx.fillStyle = COL.bg;
         ctx.beginPath();
         ctx.arc(s.x, s.y, s.r - s.w / 2, 0, TAU);
         ctx.fill();
@@ -63,18 +136,19 @@
       if (s.rot) { ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.translate(-s.x, -s.y); }
       if (s.noGlow) ctx.shadowBlur = 0;
       if (s.round && ctx.roundRect) { // colunas da água: topo arredondado
-        if (s.light) ctx.fillStyle = '#FF7483';
+        if (s.light) ctx.fillStyle = s.col ? mix(s.col, '#FFFFFF', 0.18) : COL.light;
         ctx.beginPath();
         ctx.roundRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h, [s.round, s.round, 0, 0]);
         ctx.fill();
         ctx.restore();
         return;
       }
-      if (s.head) { ctx.fillStyle = '#FFD3DA'; ctx.shadowColor = '#FFD3DA'; ctx.shadowBlur = 22; } // cabeça, quase branca
+      const head = s.col ? mix(s.col, '#FFFFFF', 0.78) : COL.head;
+      if (s.head) { ctx.fillStyle = head; ctx.shadowColor = head; ctx.shadowBlur = 22; } // cabeça, quase branca
       ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       if (s.flash > 0) { // brilho ao nascer
         ctx.globalAlpha = u.clamp(s.flash, 0, 1) * 0.8;
-        ctx.fillStyle = '#FFD3DA';
+        ctx.fillStyle = head;
         ctx.fillRect(s.x - s.w / 2, s.y - s.h / 2, s.w, s.h);
       }
       if (s.state === 'warn' && !s.solid) {
@@ -108,6 +182,9 @@
       const [a, b] = PF.hz.window(h);
       const inWin = t >= a && t <= b;
       ctx.save();
+      // keyframes/pai: o gizmo fica onde o objeto está agora (o mouse é convertido igual no main.js)
+      const M = h.keys || h.parent ? PF.hz.worldMatrix(app.level, h, t) : null;
+      if (M) ctx.transform(M[0], M[1], M[2], M[3], M[4], M[5]);
       ctx.globalAlpha = sel ? 1 : inWin ? 0.65 : 0.16;
       ctx.strokeStyle = ctx.fillStyle = sel ? C.accent : C.muted;
       ctx.lineWidth = lw;
@@ -259,6 +336,36 @@
         groupGizmo(ctx, h, single, scale);
         ctx.restore();
         continue;
+      } else if (h.type === 'prefab') {
+        const g = PF.hz.prefabGroup(h);
+        if (g) groupGizmo(ctx, g, single, scale, true);
+        ctx.restore();
+        continue;
+      } else if (h.type === 'anchor') { // mira: círculo com cruz
+        const r = 14 / scale;
+        ctx.arc(h.x, h.y, r, 0, TAU);
+        ctx.moveTo(h.x - r * 1.6, h.y); ctx.lineTo(h.x + r * 1.6, h.y);
+        ctx.moveTo(h.x, h.y - r * 1.6); ctx.lineTo(h.x, h.y + r * 1.6);
+        ctx.stroke();
+      } else if (h.type === 'emitter') { // círculo e o leque da direção/abertura
+        const r = 12 / scale, R = 60 / scale;
+        ctx.arc(h.x, h.y, r, 0, TAU);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        const a0 = (h.angle - h.spread / 2) * Math.PI / 180, a1 = (h.angle + h.spread / 2) * Math.PI / 180;
+        if (h.spread >= 360) ctx.arc(h.x, h.y, R, 0, TAU);
+        else { ctx.moveTo(h.x, h.y); ctx.arc(h.x, h.y, R, a0, a1); ctx.closePath(); }
+        ctx.globalAlpha *= 0.5;
+        ctx.stroke();
+        ctx.globalAlpha /= 0.5;
+      } else if (h.type === 'activator') { // zona tracejada com o nome da ação
+        ctx.strokeStyle = ctx.fillStyle = sel ? C.accent : PF.C.player;
+        ctx.strokeRect(h.x - h.w / 2, h.y - h.h / 2, h.w, h.h);
+        ctx.font = `${10 / scale}px "JetBrains Mono", monospace`;
+        ctx.textAlign = 'left';
+        const act = PF.HAZARDS.activator.props.find(p => p.key === 'action').options.find(o => o[0] === h.action);
+        ctx.fillText('⚑ ' + (act ? act[1] : ''), h.x - h.w / 2 + 4 / scale, h.y - h.h / 2 + 12 / scale);
       } else if (h.type === 'thunder') {
         // faixa da nuvem e setas no sentido da queda
         const top = !h.side, band = 34, y0 = top ? 0 : H - band;
@@ -560,44 +667,154 @@
 
   function player(ctx, p) {
     ctx.save();
-    ctx.fillStyle = C.player;
+    ctx.fillStyle = COL.pl;
     for (const tr of p.trail) { ctx.globalAlpha = tr.a * 0.45; diamond(ctx, tr.x, tr.y, 9 * tr.a + 2, tr.ang, 1.3, 0.8); }
     const blink = p.hurt > 0 && Math.floor(p.hurt * 14) % 2 === 0;
     if (!blink) {
       ctx.globalAlpha = 1;
-      ctx.shadowColor = C.player;
+      ctx.shadowColor = COL.pl;
       ctx.shadowBlur = p.dash > 0 ? 28 : 16;
       diamond(ctx, p.x, p.y, 11, p.ang, 1 + p.stretch, 1 - p.stretch * 0.45);
     }
     ctx.restore();
   }
 
+  // linha tracejada do filho até o pai (objeto selecionado)
+  function parentLink(ctx, app, scale) {
+    const h = app.multi.size ? null : app.selected();
+    if (!h || !h.parent) return;
+    const P = PF.hz.parentOf(app.level, h);
+    if (!P) return;
+    const pt = z => {
+      const o = [z.x + (z.ox || 0), z.y + (z.oy || 0)], M = PF.hz.worldMatrix(app.level, z, app.t);
+      return M ? PF.m.apply(M, o[0], o[1]) : o;
+    };
+    const [ax, ay] = pt(h), [bx, by] = pt(P);
+    ctx.save();
+    ctx.strokeStyle = ctx.fillStyle = PF.C.player;
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = 1.2 / scale;
+    ctx.setLineDash([3 / scale, 4 / scale]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(bx, by, 4 / scale, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+
+  // checkpoints: losango tracejado do jogador com o número (o escolhido fica forte)
+  function checkpointMarkers(ctx, app, scale) {
+    const list = app.level.checkpoints || [];
+    list.forEach((c, i) => {
+      const sel = app.sel2 && app.sel2.kind === 'cp' && app.sel2.i === i;
+      ctx.save();
+      ctx.globalAlpha = sel ? 1 : 0.5;
+      ctx.strokeStyle = ctx.fillStyle = sel ? C.accent : C.player;
+      ctx.lineWidth = 1.5 / scale;
+      ctx.setLineDash([2 / scale, 3 / scale]);
+      const r = 10;
+      ctx.beginPath();
+      ctx.moveTo(c.x, c.y - r); ctx.lineTo(c.x + r, c.y); ctx.lineTo(c.x, c.y + r); ctx.lineTo(c.x - r, c.y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.font = `${10 / scale}px "JetBrains Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('cp' + (i + 1) + ' ' + c.t.toFixed(2) + 's', c.x, c.y + r + 12 / scale);
+      ctx.restore();
+    });
+  }
+
+  // câmera: transformação mundo → tela e a moldura da vista (gizmo com a câmera desligada)
+  const camInverse = c => PF.m.compose(W / 2 + c.x, H / 2 + c.y, c.rot, 1 / c.zoom, 1 / c.zoom, W / 2, H / 2);
+  PF.camView = function (level, t) {
+    const c = PF.anim.camAt(level, t), M = camInverse(c);
+    return { cam: c, corners: [[0, 0], [W, 0], [W, H], [0, H]].map(([x, y]) => PF.m.apply(M, x, y)) };
+  };
+  function camFrame(ctx, app, scale) {
+    if (!PF.anim.hasCam(app.level)) return;
+    const v = PF.camView(app.level, app.t), q = v.corners;
+    ctx.save();
+    ctx.strokeStyle = ctx.fillStyle = PF.C.signal || '#4DD8FF';
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 1.5 / scale;
+    ctx.setLineDash([10 / scale, 6 / scale]);
+    ctx.beginPath();
+    q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.font = `${10 / scale}px "JetBrains Mono", monospace`;
+    ctx.fillText('câmera ' + Math.round(v.cam.zoom * 100) + '%', q[0][0] + 6 / scale, q[0][1] + 14 / scale);
+    ctx.restore();
+  }
+
   PF.render = function (ctx, app, view) {
-    ctx.setTransform(view.k, 0, 0, view.k, 0, 0);
+    const lvl = app.level, t = app.t;
+    setTheme(PF.anim.themeAt(lvl, t));
     const T = app.mode === 'test' ? app.test : null;
+    // a câmera vale no teste e tocando; parado no editor ela aparece só como moldura
+    const camOn = !!T || app.playing;
+    const cam = PF.anim.camAt(lvl, t);
+    const fx = PF.hz.timeFx(lvl, t);
+    if (T && T.fx) for (const e of T.fx) {
+      const a = t - e.at;
+      if (a < 0 || a > e.dur) continue;
+      const f = 1 - a / e.dur;
+      if (e.kind === 'shake') fx.shake = Math.max(fx.shake, e.amount * f);
+      else fx.flash = Math.max(fx.flash, e.amount / 100 * f);
+    }
+    ctx.setTransform(view.k, 0, 0, view.k, 0, 0);
+    const useCam = camOn && (cam.x || cam.y || cam.zoom !== 1 || cam.rot);
+    if (useCam) { ctx.fillStyle = COL.void; ctx.fillRect(0, 0, W, H); }
     if (T && T.shake > 0) {
       const m = 14 * (T.shake / 0.3);
       ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
     }
+    const sh = (camOn ? cam.shake : 0) + fx.shake;
+    if (sh > 0) { // tremor fixo pelo tempo (igual em toda reprodução)
+      ctx.translate(Math.sin(t * 91.7) * sh * 0.8 + Math.sin(t * 37.3) * sh * 0.4, Math.cos(t * 83.1) * sh * 0.8 + Math.sin(t * 29.9) * sh * 0.4);
+    }
+    if (useCam) {
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.rotate(-cam.rot * Math.PI / 180);
+      ctx.translate(-(W / 2 + cam.x), -(H / 2 + cam.y));
+    }
     background(ctx);
+    bgLayers(ctx, lvl, t, camOn ? cam : { x: 0, y: 0 });
 
-    const shapes = PF.hz.collect(app.level, app.t, []);
+    const shapes = PF.hz.collect(lvl, t, []);
     shapes.sort((a, b) => ORDER[a.state] - ORDER[b.state]);
     for (const s of shapes) drawShape(ctx, s);
 
     if (app.mode === 'edit') {
       gizmos(ctx, app, view.scale);
+      parentLink(ctx, app, view.scale);
       if (app.pen) penGizmo(ctx, app, view.scale);
+      checkpointMarkers(ctx, app, view.scale);
       spawnMarker(ctx, app, view.scale);
+      if (!camOn) camFrame(ctx, app, view.scale);
+    }
+    if (T && !T.over) player(ctx, T.player);
+    ctx.setTransform(view.k, 0, 0, view.k, 0, 0); // daqui para baixo: na tela, sem câmera
+    if (fx.flash > 0) {
+      ctx.fillStyle = PF.kf.rgba(COL.ui, Math.min(0.85, fx.flash * 0.7));
+      ctx.fillRect(0, 0, W, H);
     }
     if (T) {
-      if (!T.over) player(ctx, T.player);
       if (T.flash > 0) {
-        ctx.fillStyle = `rgba(255,77,94,${T.flash * 0.22})`;
+        ctx.fillStyle = PF.kf.rgba(COL.hz, T.flash * 0.22);
         ctx.fillRect(-20, -20, W + 40, H + 40);
       }
-      if (T.over) endScreen(ctx, 'VOCÊ PERDEU', 'R tentar de novo · Esc voltar ao editor', C.danger);
-      else if (T.done) endScreen(ctx, 'FASE CONCLUÍDA', `acertos: ${T.hits} · R jogar de novo · Esc editor`, C.accent);
+      if (T.cpMsg > 0) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, T.cpMsg);
+        ctx.fillStyle = COL.pl;
+        ctx.font = '600 16px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(T.cpText || '◆ checkpoint', W / 2, 64);
+        ctx.restore();
+      }
+      if (T.over) endScreen(ctx, 'VOCÊ PERDEU', 'R tentar de novo · Esc voltar ao editor', COL.hz);
+      else if (T.done) endScreen(ctx, 'FASE CONCLUÍDA', `acertos: ${T.hits} · R jogar de novo · Esc editor`, COL.ui);
     }
   };
 })();

@@ -127,6 +127,116 @@
     toast(pieces.length + ' peça(s) soltas' + (g.behaviors.length ? ' · os comportamentos do grupo ficaram de fora' : ''), 'mass');
   };
 
+  // ---------- prefabs (guardados na fase, cópias vinculadas) ----------
+  const CARRY = ['keys', 'parent', 'pin', 'pdelay', 'life']; // são da cópia, não do conteúdo
+  const lvl = () => PF.app.level;
+  const findPrefab = id => lvl().prefabs.find(p => p.id === id) || null;
+  const nextPrefabId = () => lvl().prefabs.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+  const carry = (from, to) => { for (const k of CARRY) if (from[k] != null) to[k] = JSON.parse(JSON.stringify(from[k])); };
+  // conteúdo do grupo (sem posição/tempo/vínculos) normalizado
+  function groupData(g) {
+    const d = JSON.parse(JSON.stringify(g));
+    for (const k of ['id', 'prefabOf', 'pRot', 'pScale', ...CARRY]) delete d[k];
+    const n = PF.hz.normalize({ ...d, type: 'group', x: 0, y: 0, time: 0 });
+    if (n) delete n.id;
+    return n;
+  }
+  const replaceHazard = (old, nu) => { const hs = lvl().hazards, i = hs.indexOf(old); if (i >= 0) hs[i] = nu; else hs.push(nu); };
+  M.instances = id => lvl().hazards.filter(h => h.type === 'prefab' && h.ref === id).length;
+
+  M.createPrefab = function (g) {
+    if (!editable() || !g || g.type !== 'group') return;
+    if (lvl().prefabs.length >= 32) { toast('Limite de 32 prefabs por fase', 'prefab'); return; }
+    const name = (prompt('Nome do prefab:', 'Prefab ' + (lvl().prefabs.length + 1)) || '').trim().slice(0, 40);
+    if (!name) return;
+    const data = groupData(g);
+    if (!data || !data.items.length) return;
+    const id = nextPrefabId();
+    lvl().prefabs.push({ id, name, group: data });
+    const inst = PF.hz.create('prefab', g.x, g.y, g.time);
+    Object.assign(inst, { id: g.id, ref: id, rot: 0, scale: 100 });
+    carry(g, inst);
+    replaceHazard(g, inst);
+    PF.app.select(inst.id);
+    done();
+    toast('Prefab "' + name + '" criado · insira mais cópias no painel da fase (Prefabs)', 'prefab');
+  };
+  M.insertPrefab = function (id) {
+    const p = findPrefab(id), app = PF.app;
+    if (!p || !editable()) return;
+    const t0 = u.clamp(app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : u.round(app.t, 2), 0, app.level.duration);
+    const inst = PF.hz.create('prefab', W / 2, H / 2, t0);
+    inst.ref = id;
+    app.level.hazards.push(inst);
+    app.select(inst.id);
+    done();
+  };
+  M.duplicatePrefab = function (id) {
+    const p = findPrefab(id);
+    if (!p || !editable() || lvl().prefabs.length >= 32) return;
+    lvl().prefabs.push({ id: nextPrefabId(), name: (p.name + ' (cópia)').slice(0, 40), group: JSON.parse(JSON.stringify(p.group)) });
+    done();
+  };
+  M.renamePrefab = function (id) {
+    const p = findPrefab(id);
+    if (!p || !editable()) return;
+    const name = (prompt('Novo nome:', p.name) || '').trim().slice(0, 40);
+    if (!name || name === p.name) return;
+    p.name = name;
+    done();
+  };
+  // cópia vinculada → grupo comum (rotação/escala da cópia somadas às do conteúdo)
+  function toGroup(inst, keepLink) {
+    const p = findPrefab(inst.ref);
+    if (!p) return null;
+    const g = { ...JSON.parse(JSON.stringify(p.group)), type: 'group', id: inst.id, x: inst.x, y: inst.y, time: inst.time };
+    if (keepLink) Object.assign(g, { prefabOf: p.id, pRot: inst.rot, pScale: inst.scale });
+    else { g.rot = u.clamp(g.rot + inst.rot, -360, 360); g.scale = u.clamp(g.scale * inst.scale / 100, 5, 500); }
+    carry(inst, g);
+    return g;
+  }
+  M.deletePrefab = function (id) {
+    const p = findPrefab(id);
+    if (!p || !editable()) return;
+    const n = M.instances(id);
+    if (!confirm('Apagar o prefab "' + p.name + '"?' + (n ? ' As ' + n + ' cópia(s) viram grupos comuns.' : ''))) return;
+    for (const h of lvl().hazards.slice()) if (h.type === 'prefab' && h.ref === id) { const g = toGroup(h, false); if (g) replaceHazard(h, g); }
+    lvl().prefabs = lvl().prefabs.filter(q => q.id !== id);
+    PF.app.select(null);
+    done();
+  };
+  // abre o conteúdo do prefab como grupo editável no lugar da cópia
+  M.editPrefab = function (inst) {
+    if (!editable() || !inst || inst.type !== 'prefab') return;
+    const g = toGroup(inst, true);
+    if (!g) { toast('Este prefab não existe mais na fase', 'prefab'); return; }
+    replaceHazard(inst, g);
+    PF.app.select(g.id);
+    done();
+    toast('Editando o prefab · mexa nos itens e clique em "Salvar no prefab" para atualizar todas as cópias', 'prefab');
+  };
+  M.savePrefab = function (g) {
+    if (!editable() || !g || !g.prefabOf) return;
+    const p = findPrefab(g.prefabOf);
+    if (!p) { toast('O prefab foi apagado; o grupo fica comum', 'prefab'); M.unlinkPrefab(g); return; }
+    const data = groupData(g);
+    if (!data || !data.items.length) return;
+    p.group = data;
+    const inst = PF.hz.create('prefab', g.x, g.y, g.time);
+    Object.assign(inst, { id: g.id, ref: p.id, rot: g.pRot || 0, scale: g.pScale || 100 });
+    carry(g, inst);
+    replaceHazard(g, inst);
+    PF.app.select(inst.id);
+    done();
+    toast('Prefab "' + p.name + '" salvo · ' + M.instances(p.id) + ' cópia(s) atualizada(s)', 'prefab');
+  };
+  M.unlinkPrefab = function (h) {
+    if (!editable() || !h) return;
+    if (h.type === 'prefab') { const g = toGroup(h, false); if (g) { replaceHazard(h, g); PF.app.select(g.id); } }
+    else if (h.type === 'group') { delete h.prefabOf; delete h.pRot; delete h.pScale; }
+    done();
+  };
+
   // ---------- presets (no navegador) ----------
   M.presets = function () {
     try { const v = JSON.parse(localStorage.getItem(PRESET_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }

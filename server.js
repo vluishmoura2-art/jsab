@@ -56,7 +56,7 @@ function clientIp(req) {
 const sandbox = { console, TextDecoder };
 sandbox.window = sandbox;
 vm.createContext(sandbox);
-for (const f of ['js/config.js', 'js/transform.js', 'js/hazards.js', 'js/levelcheck.js', 'js/storage.js', 'js/musiccheck.js']) {
+for (const f of ['js/config.js', 'js/anim.js', 'js/transform.js', 'js/hazards.js', 'js/levelcheck.js', 'js/storage.js', 'js/musiccheck.js']) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox, { filename: f });
 }
 const PF = sandbox.PF;
