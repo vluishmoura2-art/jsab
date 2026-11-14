@@ -24,7 +24,9 @@
       return this.level.hazards.filter(h => ids.has(h.id));
     },
 
-    select(id) { this.selectedId = id; this.multi.clear(); this.spawnSelected = false; PF.panel.refresh(); },
+    select(id) { this.selectedId = id; this.multi.clear(); this.spawnSelected = false; this.vtx = null; PF.panel.refresh(); },
+    vtx: null, // ponto escolhido do caminho selecionado (Delete apaga)
+    pen: null, // caneta desenhando: { id, down, free, sx, sy, lx, ly, hover }
     // soma/tira da seleção (Shift+clique)
     toggleSelect(id) {
       if (!this.multi.size && this.selectedId != null) this.multi.add(this.selectedId);
@@ -218,6 +220,7 @@
     if (app.mode !== 'edit' || e.button !== 0) return;
     const p = toWorld(e);
     stage.setPointerCapture(e.pointerId);
+    if (app.tool === 'pen') { penDown(p); return; }
     if (app.tool !== 'select') {
       // com BPM e encaixe ligado, nasce na batida mais perto da agulha
       const t0 = app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : u.round(app.t, 2);
@@ -234,6 +237,25 @@
       if (near(PF.groupHandles(cur, view.scale).rot)) { drag = { id: cur.id, kind: 'grot', moved: false }; return; }
       if (e.altKey && PF.HAZARDS.group.hit(cur, p.x, p.y, 10 / view.scale)) { drag = { id: cur.id, kind: 'gpivot', moved: false }; return; }
     }
+    if (cur && cur.type === 'shape' && cur.kind === 4) {
+      const vi = vertexAt(cur, p);
+      if (vi < 0 && !e.shiftKey) app.vtx = null;
+      if (vi >= 0 && !e.shiftKey) {
+        app.vtx = vi;
+        drag = { id: cur.id, kind: 'vtx', vi, moved: false };
+        return;
+      }
+      if (e.shiftKey) { // Shift+clique na borda: ponto novo ali (e já dá para arrastar)
+        const ed = edgeAt(cur, p);
+        if (ed && cur.pts.length < PF.hz.MAX_PTS * 2) {
+          cur.pts.splice((ed.i + 1) * 2, 0, u.round(ed.x, 2), u.round(ed.y, 2));
+          app.vtx = ed.i + 1;
+          drag = { id: cur.id, kind: 'vtx', vi: ed.i + 1, moved: true };
+          app.changed(false);
+          return;
+        }
+      }
+    }
     if (cur && cur.type === 'shape' && !e.shiftKey) {
       const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
       for (const c of hd.path) {
@@ -243,11 +265,11 @@
       }
       if (near(hd.rot)) {
         // ângulo do pivô até a alça, sem a rotação: a alça fica embaixo do mouse ao girar
-        const [lx, ly] = [0 - cur.pivotX, -cur.h / 2 - 30 / view.scale - cur.pivotY];
+        const [lx, ly] = [hd.rotLocal[0] - cur.pivotX, hd.rotLocal[1] - cur.pivotY];
         drag = { id: cur.id, kind: 'rot', base: Math.atan2(ly, lx) * 180 / Math.PI, moved: false };
         return;
       }
-      if (near(hd.size)) { drag = { id: cur.id, kind: 'size', moved: false }; return; }
+      if (hd.size && near(hd.size)) { drag = { id: cur.id, kind: 'size', moved: false }; return; }
       if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) {
         drag = { id: cur.id, kind: 'pivot', moved: false };
         return;
@@ -280,6 +302,7 @@
   stage.addEventListener('pointermove', e => {
     if (app.mode !== 'edit') return;
     const p = toWorld(e);
+    if (app.pen) { penMove(p); return; }
     if (!drag) {
       if (app.tool === 'select') {
         const sp = app.level.spawn;
@@ -294,7 +317,8 @@
           const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
           if (hd.path.some(c => c.pts.some(q => near([q.x, q.y])))) { stage.style.cursor = 'move'; return; }
           if (near(hd.rot)) { stage.style.cursor = 'grab'; return; }
-          if (near(hd.size)) { stage.style.cursor = 'nwse-resize'; return; }
+          if (hd.size && near(hd.size)) { stage.style.cursor = 'nwse-resize'; return; }
+          if (hd.verts.some(v => near(v))) { stage.style.cursor = 'move'; return; }
           if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) { stage.style.cursor = 'crosshair'; return; }
         }
         stage.style.cursor = overSpawn || pick(p.x, p.y) ? 'move' : 'default';
@@ -331,7 +355,13 @@
   // arrastar uma alça da Forma
   function shapeDrag(h, p, e) {
     const set = (k, v) => { if (h[k] !== v) { h[k] = v; drag.moved = true; } };
-    if (drag.kind === 'grot') { // a alça fica acima do pivô quando a rotação é 0
+    if (drag.kind === 'vtx') {
+      let q = p;
+      if (e.shiftKey) q = { x: Math.round(p.x / 20) * 20, y: Math.round(p.y / 20) * 20 }; // Shift: grade de 20 px
+      const [lx, ly] = PF.m.apply(PF.m.invert(PF.hz.shapeMatrix(h)), q.x, q.y);
+      const i = drag.vi * 2, nx = u.round(u.clamp(lx, -3000, 3000), 2), ny = u.round(u.clamp(ly, -3000, 3000), 2);
+      if (h.pts[i] !== nx || h.pts[i + 1] !== ny) { h.pts[i] = nx; h.pts[i + 1] = ny; drag.moved = true; }
+    } else if (drag.kind === 'grot') { // a alça fica acima do pivô quando a rotação é 0
       let a = Math.atan2(p.y - h.y, p.x - h.x) * 180 / Math.PI + 90;
       if (e.shiftKey) a = Math.round(a / 15) * 15;
       set('rot', ((Math.round(a) + 540) % 360) - 180);
@@ -379,6 +409,7 @@
     if (drag.moved) app.changed(false);
   }
   const endDrag = () => {
+    if (app.pen) { penUp(); return; }
     if (drag && drag.moved) app.commit();
     // clique (sem arrastar) num item de uma seleção múltipla: fica só ele
     else if (drag && !drag.shift && !drag.kind && !drag.spawn && app.multi.size) app.select(drag.id);
@@ -386,6 +417,105 @@
   };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('dblclick', () => { if (app.pen) finishPen(); });
+
+  // ---------- pontos do caminho ----------
+  function vertexAt(h, p) {
+    const m = PF.hz.shapeMatrix(h);
+    for (let i = h.pts.length / 2 - 1; i >= 0; i--) {
+      const [x, y] = PF.m.apply(m, h.pts[i * 2], h.pts[i * 2 + 1]);
+      if (Math.hypot(p.x - x, p.y - y) <= 8 / view.scale) return i;
+    }
+    return -1;
+  }
+  // borda mais perto do mouse: índice do ponto antes dela e o ponto (coords locais) onde dividir
+  function edgeAt(h, p) {
+    const inv = PF.m.invert(PF.hz.shapeMatrix(h)), [lx, ly] = PF.m.apply(inv, p.x, p.y), P = h.pts, n = P.length / 2;
+    const k = Math.hypot(inv[0], inv[1]); // px do mundo → px locais
+    let best = null;
+    for (let i = 0, segs = h.closed ? n : n - 1; i < segs; i++) {
+      const j = (i + 1) % n, ax = P[i * 2], ay = P[i * 2 + 1], bx = P[j * 2], by = P[j * 2 + 1];
+      const d = u.distToSeg(lx, ly, ax, ay, bx, by);
+      if (d <= 8 / view.scale * k && (!best || d < best.d)) {
+        const dx = bx - ax, dy = by - ay, t = u.clamp(((lx - ax) * dx + (ly - ay) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+        best = { i, d, x: ax + dx * t, y: ay + dy * t };
+      }
+    }
+    return best;
+  }
+  function deleteVertex() {
+    const h = app.selected();
+    if (!h || h.type !== 'shape' || h.kind !== 4 || app.vtx == null) return false;
+    if (h.pts.length / 2 <= (h.closed ? 3 : 2)) { if (PF.toast) PF.toast('O caminho precisa de pelo menos ' + (h.closed ? 3 : 2) + ' pontos', 'info', 'vtx'); return true; }
+    h.pts.splice(app.vtx * 2, 2);
+    app.vtx = null;
+    app.changed(true);
+    return true;
+  }
+
+  // ---------- caneta (clique = ponto, arrastar = pincel) ----------
+  const penShape = () => app.pen && app.level.hazards.find(z => z.id === app.pen.id);
+  function penPoint(h, p) {
+    const [lx, ly] = PF.m.apply(PF.m.invert(PF.hz.shapeMatrix(h)), p.x, p.y);
+    h.pts.push(u.round(lx, 2), u.round(ly, 2));
+    app.changed(false);
+  }
+  function penDown(p) {
+    let h = penShape();
+    if (!h) {
+      const t0 = app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : u.round(app.t, 2);
+      h = PF.hz.create('shape', Math.round(p.x), Math.round(p.y), u.clamp(t0, 0, app.level.duration));
+      Object.assign(h, { kind: 4, pts: [0, 0], closed: 0, smooth: 0, hollow: 0, stroke: 12 });
+      app.level.hazards.push(h);
+      app.select(h.id);
+      app.pen = { id: h.id, down: true, free: false, sx: p.x, sy: p.y, lx: p.x, ly: p.y, hover: p };
+      return;
+    }
+    const m = PF.hz.shapeMatrix(h), n = h.pts.length / 2, [fx, fy] = PF.m.apply(m, h.pts[0], h.pts[1]);
+    if (n >= 3 && Math.hypot(p.x - fx, p.y - fy) <= 10 / view.scale) { h.closed = 1; finishPen(); return; } // fecha no 1º ponto
+    if (n >= PF.hz.MAX_PTS) { finishPen(); return; }
+    penPoint(h, p);
+    Object.assign(app.pen, { down: true, free: false, sx: p.x, sy: p.y, lx: p.x, ly: p.y });
+  }
+  function penMove(p) {
+    const pen = app.pen, h = penShape();
+    pen.hover = p;
+    if (!h || !pen.down) return;
+    if (!pen.free && Math.hypot(p.x - pen.sx, p.y - pen.sy) > 8 / view.scale) pen.free = true; // virou pincel
+    if (pen.free && Math.hypot(p.x - pen.lx, p.y - pen.ly) >= 10 / view.scale && h.pts.length < PF.hz.MAX_PTS * 2) {
+      penPoint(h, p);
+      pen.lx = p.x; pen.ly = p.y;
+    }
+  }
+  function penUp() {
+    const pen = app.pen, h = penShape();
+    if (!pen) return;
+    if (pen.down && pen.free && h) { // traço livre: limpa os pontos e termina
+      h.pts = PF.geo.simplify(h.pts, false, 2.5);
+      finishPen();
+      return;
+    }
+    pen.down = false;
+  }
+  // termina o desenho: tira pontos repetidos, põe o pivô no centro e salva
+  function finishPen() {
+    const h = penShape();
+    app.pen = null;
+    if (!h) return;
+    h.pts = PF.geo.merge(h.pts, !!h.closed, 1.5);
+    if (h.pts.length < 4) {
+      app.level.hazards = app.level.hazards.filter(z => z.id !== h.id);
+      app.select(null);
+      return;
+    }
+    if (h.closed && h.pts.length < 6) h.closed = 0;
+    PF.geo.recenter(h);
+    const [cx, cy] = PF.m.apply(PF.hz.shapeMatrix(h), 0, 0); // pivô no centro do desenho
+    h.x = u.round(cx, 2); h.y = u.round(cy, 2); h.pivotX = 0; h.pivotY = 0;
+    app.select(h.id);
+    PF.panel.rebuild();
+    app.commit();
+  }
 
   // ---------- barra de ferramentas ----------
   const ICON = {
@@ -400,6 +530,7 @@
     wheel: '<circle cx="12" cy="4.5" r="2.3"/><circle cx="19.5" cy="12" r="2.3"/><circle cx="12" cy="19.5" r="2.3"/><circle cx="4.5" cy="12" r="2.3"/><circle cx="17.3" cy="6.7" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="6.7" r="1.6" fill="currentColor" stroke="none"/>',
     spike: '<path d="M10 3h8a2.5 2.5 0 0 1 2.5 2.5V21H10l-4-2 4-2-4-2 4-2-4-2 4-2-4-2 4-2-4-2z" fill="currentColor"/>',
     curve: '<rect x="13.5" y="2.5" width="6" height="6" transform="rotate(20 16.5 5.5)" fill="currentColor"/><rect x="8" y="10" width="4.5" height="4.5" transform="rotate(40 10.25 12.25)" fill="currentColor" stroke="none"/><rect x="3.5" y="17" width="3.2" height="3.2" transform="rotate(55 5.1 18.6)" fill="currentColor" stroke="none"/>',
+    pen: '<path d="M4 20l3-9 9-8 5 5-8 9z"/><path d="M7 11l6 6"/><circle cx="4" cy="20" r="1.4" fill="currentColor"/>',
     shape: '<circle cx="8" cy="8" r="5"/><path d="M12 12h9v9h-9z" fill="currentColor"/><path d="M15.5 2.5l4.5 7.5h-9z"/><path d="M3 21l6-6" stroke-width="2.6" stroke-linecap="round"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
@@ -423,7 +554,10 @@
       { id: 'spike', label: 'Plataforma pontuda', key: '0' },
     ] },
     { label: 'CLIMA', tools: [{ id: 'thunder', label: 'Trovão', key: '6' }] },
-    { label: 'MANUAL', tools: [{ id: 'shape', label: 'Forma livre', key: 'F' }] },
+    { label: 'MANUAL', tools: [
+      { id: 'shape', label: 'Forma livre', key: 'F' },
+      { id: 'pen', label: 'Caneta: clique = ponto, arrastar = pincel, clique no 1º ponto fecha, Enter/duplo clique termina', key: 'P' },
+    ] },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
@@ -482,6 +616,7 @@
   }
 
   function setTool(id) {
+    if (app.pen && id !== 'pen') finishPen();
     app.tool = id;
     for (const k in toolBtns) toolBtns[k].classList.toggle('active', k === id);
     stage.classList.toggle('placing', id !== 'select');
@@ -903,7 +1038,9 @@
     switch (k) {
       case ' ': togglePlay(); e.preventDefault(); break;
       case 'v': setTool('select'); break;
-      case 'escape': setTool('select'); app.select(null); break;
+      case 'escape': if (app.pen) { finishPen(); break; } setTool('select'); app.select(null); break;
+      case 'enter': if (app.pen) { finishPen(); e.preventDefault(); } break;
+      case 'p': setTool('pen'); break;
       case '1': setTool('ball'); break;
       case '2': setTool('explosive'); break;
       case '3': setTool('line'); break;
@@ -916,7 +1053,7 @@
       case '0': setTool('spike'); break;
       case 'c': setTool('curve'); break;
       case 'f': setTool('shape'); break;
-      case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
+      case 'delete': case 'backspace': if (!deleteVertex()) app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'g': if (e.shiftKey) cycleSnapDiv(); else toggleSnap(); break;
       case 'b': if (!e.repeat) tapTempo(); break;

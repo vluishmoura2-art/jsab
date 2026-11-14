@@ -40,6 +40,7 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   início em `level.spawn`, losango gira para a direção do movimento), loop.
   `app.playLevel()` joga uma fase online sem tocar na fase do editor (`app.editLevel` guarda a
   sua; `commit()` não salva enquanto isso).
+- `js/geometry.js` — geometria dos caminhos (`PF.geo`): geradores, operações nos pontos, SVG
 - `js/mass.js` — edição em massa e presets de grupo (`PF.mass`), carregado depois do `main.js`
 - `js/online.js` — fases online (`PF.online`): publicar, lista ao vivo (SSE), jogar/abrir, avisos (`PF.toast`).
   Cópia local das fases de todos em `localStorage['pulsefield.publishedCache']` (por servidor:
@@ -147,7 +148,18 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   agrupar, girar/escalar em volta do centro da seleção ou da arena, distribuir (radial, grade,
   espiral; apontar para fora), escada no tempo (bt), pulsar todos. Presets de grupo em
   `localStorage['pulsefield.presets']` (painel da fase: inserir no centro, na agulha).
-  Próxima etapa: telegrafia do caminho.
+  Caminho (Forma `kind` 4): `h.pts` = [x, y, …] locais (centro 0,0; até 128 pontos), `closed`
+  (fechado cheio/vazado ou aberto = linhas com `stroke`), `smooth` (Catmull-Rom só na saída).
+  Caneta (tecla P): clique = ponto, arrastar = pincel (simplifica no fim), clique no 1º ponto fecha,
+  Enter/duplo clique/Esc termina (pivô vai para o centro). Mapa com o caminho selecionado: arrastar
+  os quadradinhos (Shift = grade 20 px), Shift+clique na borda adiciona ponto, clique no ponto +
+  Delete apaga (`app.vtx`). `js/geometry.js` (`PF.geo`, só editor): geradores (polígono, estrela,
+  arco, anel, espiral, onda), simplificar (RDP), suavizar (Chaikin), chanfrar, arredondar, deslocar
+  contorno, unir pontos, inverter, inclinar, esticar, `toPath` (converte as outras formas),
+  `recenter`, SVG (importar path/polygon/rect/circle → Formas agrupadas; exportar `toSVG`).
+  Painel: seção "Geometria". Plano de modelagem (próximas rodadas): booleanas, modificadores
+  não destrutivos (bend/twist/taper/noise), hitbox separada, camadas/travar/ocultar, guias e
+  encaixe em ponto/borda, imagem de referência, telegrafia do caminho.
   Com BPM, perigos novos nascem na batida (encaixe) e os blocos mostram "c3 b2" (compasso/batida);
   a preferência do encaixe fica em `localStorage['pulsefield.snap']`.
 

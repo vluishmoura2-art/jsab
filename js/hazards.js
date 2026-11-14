@@ -864,7 +864,8 @@
     { key: 'life', label: 'Duração', min: 0.1, max: 20, step: 0.1, unit: 's' },
     { key: 'aim', label: 'Direção', type: 'select', options: [[0, 'Fixa'], [1, 'Gira com a forma']] },
   ];
-  const SHAPE_KINDS = [[0, 'Círculo'], [1, 'Quadrado'], [2, 'Triângulo'], [3, 'Laser']];
+  const SHAPE_KINDS = [[0, 'Círculo'], [1, 'Quadrado'], [2, 'Triângulo'], [3, 'Laser'], [4, 'Caminho (pontos)']];
+  const BASIC_KINDS = SHAPE_KINDS.slice(0, 4); // "transformar" não vira caminho (ele precisa de pontos)
 
   PF.TRIGGER_ACTIONS = {
     burst: { label: 'Rajada (Burst)', children: true, params: SHOT,
@@ -893,7 +894,7 @@
       { key: 'ramp', label: 'Em quanto tempo', min: 0, max: 10, step: 0.05, unit: 's' }],
       defaults: { mult: 2.5, ramp: 0.3 } },
     transform: { label: 'Transformar (Transform)', params: [
-      { key: 'kind', label: 'Vira', type: 'select', options: SHAPE_KINDS },
+      { key: 'kind', label: 'Vira', type: 'select', options: BASIC_KINDS },
       { key: 'size', label: 'Tamanho', min: 5, max: 500, step: 1, unit: '%' }],
       defaults: { kind: 0, size: 100 } },
     despawn: { label: 'Sumir', hides: true, params: [], defaults: {} },
@@ -1069,7 +1070,45 @@
   // Círculo, quadrado, triângulo ou laser com rotação e ponto de pivô. (x, y) é onde fica o pivô;
   // pivotX/pivotY é o pivô em relação ao centro da forma, antes de girar. Os comportamentos
   // contam o tempo a partir de quando a forma fica ativa; no aviso ela fica na pose inicial.
-  const SHP_CIRCLE = 0, SHP_SQUARE = 1, SHP_TRI = 2, SHP_LASER = 3;
+  const SHP_CIRCLE = 0, SHP_SQUARE = 1, SHP_TRI = 2, SHP_LASER = 3, SHP_PATH = 4;
+  // ---- Caminho: forma feita de pontos (h.pts = [x, y, x, y…] em coords locais, centro em 0,0) ----
+  // closed: fechado (cheio ou vazado) ou aberto (uma linha com a grossura "stroke"); smooth: passa
+  // uma curva suave (Catmull-Rom) pelos pontos. Os pontos são os que o editor mexe; a curva é só saída.
+  const MAX_PTS = 128;
+  function catmull(p, closed) {
+    const n = p.length / 2, out = [];
+    const seg = Math.max(2, Math.min(8, Math.floor(512 / n))); // caminhos grandes: menos pedaços
+    const P = i => {
+      i = closed ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i));
+      return [p[2 * i], p[2 * i + 1]];
+    };
+    const last = closed ? n : n - 1;
+    for (let i = 0; i < last; i++) {
+      const a = P(i - 1), b = P(i), c = P(i + 1), d = P(i + 2);
+      for (let k = 0; k < seg; k++) {
+        const t = k / seg, t2 = t * t, t3 = t2 * t;
+        for (let j = 0; j < 2; j++) {
+          out.push(0.5 * (2 * b[j] + (-a[j] + c[j]) * t + (2 * a[j] - 5 * b[j] + 4 * c[j] - d[j]) * t2 + (-a[j] + 3 * b[j] - 3 * c[j] + d[j]) * t3));
+        }
+      }
+    }
+    if (!closed) out.push(p[p.length - 2], p[p.length - 1]);
+    return out;
+  }
+  const pathPts = h => {
+    const p = h.pts || [];
+    return h.smooth && p.length >= 6 ? catmull(p, !!h.closed) : p;
+  };
+  // pontos vindos de JSON: números, presos a ±3000, no máx. MAX_PTS pontos
+  function normPts(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (let i = 0; i + 1 < raw.length && out.length < MAX_PTS * 2; i += 2) {
+      const x = Number(raw[i]), y = Number(raw[i + 1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) out.push(u.round(u.clamp(x, -3000, 3000), 2), u.round(u.clamp(y, -3000, 3000), 2));
+    }
+    return out;
+  }
   // pose (posição do pivô, rotação e escala) no tempo bt desde que ficou ativa; T = tempo da fase
   function shapePose(h, bt, T) {
     const d = { x: 0, y: 0, rot: 0, s: 1 };
@@ -1094,6 +1133,7 @@
   };
   // contorno da forma em coords locais (centro em 0,0), como lista x,y,x,y…
   function shapeLocal(h, kind = h.kind) {
+    if (kind === SHP_PATH) return pathPts(h);
     const w2 = h.w / 2, h2 = h.h / 2;
     if (kind === SHP_SQUARE) return [-w2, -h2, w2, -h2, w2, h2, -w2, h2];
     if (kind === SHP_TRI) return [0, -h2, w2, h2, -w2, h2];
@@ -1106,6 +1146,20 @@
     const m = shapeMatrix(h, k, pose, pre);
     const kind = pose && pose.kind != null ? pose.kind : h.kind;
     const sk = k * (pose ? pose.s * (pose.ks || 1) : 1);
+    if (kind === SHP_PATH) {
+      const loc = pathPts(h);
+      if (loc.length < 4) return;
+      const pts = [];
+      for (let i = 0; i < loc.length; i += 2) pts.push(...PF.m.apply(m, loc[i], loc[i + 1]));
+      if (h.closed && !h.hollow && pts.length >= 6) { out.push({ ...base, kind: 'poly', pts }); return; }
+      // aberto ou vazado: uma linha por trecho (colisão exata pela grossura)
+      const n = pts.length / 2, segs = h.closed ? n : n - 1;
+      for (let i = 0; i < segs; i++) {
+        const j = (i + 1) % n;
+        out.push({ ...base, kind: 'line', x1: pts[i * 2], y1: pts[i * 2 + 1], x2: pts[j * 2], y2: pts[j * 2 + 1], w: h.stroke * sk });
+      }
+      return;
+    }
     if (kind === SHP_LASER) {
       const [x1, y1] = PF.m.apply(m, -h.w / 2, 0), [x2, y2] = PF.m.apply(m, h.w / 2, 0);
       out.push({ ...base, kind: 'line', x1, y1, x2, y2, w: h.h * sk });
@@ -1144,20 +1198,28 @@
   PF.HAZARDS.shape = {
     label: 'Forma',
     desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma. Em "Comportamentos" você empilha movimentos (mover, onda, órbita, caminho, pulsar…): eles começam quando a forma fica ativa e são aplicados de cima para baixo. Em "Gatilhos" você escolhe quando (na batida, num tempo…) ela faz uma ação (rajada, explodir, dividir…); os losangos no bloco da timeline mostram os disparos.',
-    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1, behaviors: [], triggers: [] },
+    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, closed: 1, smooth: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1, behaviors: [], triggers: [], pts: [] },
     props: [
-      { key: 'kind', label: 'Forma', type: 'select', options: SHAPE_KINDS },
-      { key: 'w', label: 'Largura (laser: comprimento)', min: 4, max: 3000, step: 1, unit: 'px' },
-      { key: 'h', label: 'Altura (laser: grossura)', min: 2, max: 3000, step: 1, unit: 'px' },
+      { key: 'kind', label: 'Forma', type: 'select', options: SHAPE_KINDS, rebuild: true },
+      { key: 'w', label: 'Largura (laser: comprimento)', min: 4, max: 3000, step: 1, unit: 'px', show: h => h.kind !== SHP_PATH },
+      { key: 'h', label: 'Altura (laser: grossura)', min: 2, max: 3000, step: 1, unit: 'px', show: h => h.kind !== SHP_PATH },
+      { key: 'closed', label: 'Caminho', type: 'select', options: [[1, 'Fechado'], [0, 'Aberto (linha)']], show: h => h.kind === SHP_PATH },
+      { key: 'smooth', label: 'Entre os pontos', type: 'select', options: [[0, 'Retas'], [1, 'Curva suave']], show: h => h.kind === SHP_PATH },
       { key: 'rot', label: 'Rotação', min: -360, max: 360, step: 1, unit: '°' },
       { key: 'pivotX', label: 'Pivô X (do centro)', min: -1500, max: 1500, step: 1, unit: 'px' },
       { key: 'pivotY', label: 'Pivô Y (do centro)', min: -1500, max: 1500, step: 1, unit: 'px' },
-      { key: 'hollow', label: 'Preenchimento', type: 'select', options: [[0, 'Cheia'], [1, 'Vazada']] },
-      { key: 'stroke', label: 'Grossura do contorno (vazada)', min: 2, max: 200, step: 1, unit: 'px' },
+      { key: 'hollow', label: 'Preenchimento', type: 'select', options: [[0, 'Cheia'], [1, 'Vazada']], show: h => h.kind !== SHP_LASER && !(h.kind === SHP_PATH && !h.closed) },
+      { key: 'stroke', label: 'Grossura do contorno', min: 2, max: 200, step: 1, unit: 'px', show: h => h.hollow || (h.kind === SHP_PATH && !h.closed) },
       WARN_PROP,
       { key: 'active', label: 'Tempo ativa', min: 0.05, max: 120, step: 0.05, unit: 's' },
     ],
-    extra(raw, h) { h.behaviors = normBehaviors(raw.behaviors); h.triggers = normTriggers(raw.triggers); },
+    extra(raw, h) {
+      h.behaviors = normBehaviors(raw.behaviors);
+      h.triggers = normTriggers(raw.triggers);
+      h.pts = normPts(raw.pts);
+      // caminho sem pontos (ex.: trocou o tipo no painel): começa do retângulo w×h
+      if (h.kind === SHP_PATH && h.pts.length < 4) h.pts = [-h.w / 2, -h.h / 2, h.w / 2, -h.h / 2, h.w / 2, h.h / 2, -h.w / 2, h.h / 2];
+    },
     lead: () => 0,
     warnLen: h => h.warn,
     length: h => h.warn + Math.max(h.active, shapeEvents(h).maxEnd) + FADE,
@@ -1371,6 +1433,7 @@
         if (c.type === 'shape') {
           c.w = u.clamp(it.w * k, 4, 3000); c.h = u.clamp(it.h * k, 2, 3000); c.stroke = u.clamp(it.stroke * k, 2, 200);
           c.pivotX = it.pivotX * k; c.pivotY = it.pivotY * k;
+          if (it.pts) c.pts = it.pts.map(v => u.round(v * k, 2)); // caminho: pontos na escala
         } else c.scale = u.clamp(it.scale * k, 5, 500);
         c.time = u.round(g.time + it.time + i * delay, 4);
         out.push(c);
@@ -1419,6 +1482,8 @@
     newBehavior,
     MAX_BEHAVIORS,
     shapeEvents,
+    pathPts,
+    MAX_PTS,
     groupOutlines,
     MAX_ITEMS,
     makeGroup,

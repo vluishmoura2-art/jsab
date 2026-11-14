@@ -118,7 +118,7 @@
     const s2 = section(h.type === 'group' ? 'Grupo e repetidor' : 'Propriedades');
     propFields(s2, h, def.props);
 
-    if (h.type === 'shape') { buildBehaviors(h); buildTriggers(h); }
+    if (h.type === 'shape') { buildGeometry(h); buildBehaviors(h); buildTriggers(h); }
     if (h.type === 'group') { buildItems(h); buildBehaviors(h, 'Comportamentos do grupo'); buildGroupActions(h); }
 
     const s3 = section();
@@ -341,6 +341,119 @@
     }
   }
 
+  // ---------- geometria (caminho de pontos) ----------
+  const geoOpts = { gen: 0, sides: 6, radius: 120, inner: 45, sweep: 240, start: -90, thick: 18, turns: 3, r0: 20, len: 480, amp: 50, waves: 3, d: 14, tol: 3, skew: 15, sx: 120, sy: 100 };
+  const GEN = [[0, 'Polígono'], [1, 'Estrela'], [2, 'Arco'], [3, 'Anel'], [4, 'Espiral'], [5, 'Onda']];
+  function buildGeometry(h) {
+    const s = section('Geometria');
+    const G = PF.geo;
+    const row = () => { const r = el('div', 'grid grid-cols-2 gap-1.5 mb-2'); s.appendChild(r); return r; };
+    const op = (parent, label, title, fn) => {
+      const b = el('button', 'pf-btn', label);
+      b.title = title;
+      b.addEventListener('click', () => { fn(); PF.app.vtx = null; P.rebuild(); PF.app.commit(); });
+      parent.appendChild(b);
+      return b;
+    };
+    if (h.kind !== 4) {
+      s.appendChild(el('p', 'text-[11px] text-pf-muted mb-2 leading-relaxed', 'Para mexer ponto a ponto, converta em caminho (o desenho fica igual).'));
+      op(row(), 'Converter em caminho', 'Vira uma forma de pontos editáveis', () => G.toPath(h));
+      const r2 = row();
+      op(r2, 'Exportar SVG', 'Baixa esta forma como .svg', () => G.download('forma-' + h.id + '.svg', G.toSVG([h]), 'image/svg+xml'));
+      return;
+    }
+    // trocou o tipo para Caminho no select: começa do retângulo w×h
+    if (!h.pts.length && !PF.app.pen) { h.pts =[-h.w / 2, -h.h / 2, h.w / 2, -h.h / 2, h.w / 2, h.h / 2, -h.w / 2, h.h / 2]; h.closed = 1; }
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mb-3 leading-relaxed',
+      h.pts.length / 2 + ' pontos · arraste os quadradinhos no mapa (Shift: grade) · Shift+clique na borda adiciona · clique num ponto e Delete apaga.'));
+
+    // gerar contorno
+    selectField(s, geoOpts, { key: 'gen', label: 'Gerar', type: 'select', options: GEN });
+    s.lastChild.querySelector('select').addEventListener('change', () => P.rebuild());
+    const g = geoOpts.gen;
+    if (g === 0 || g === 1) numberField(s, geoOpts, { key: 'sides', label: g ? 'Pontas' : 'Lados', min: 3, max: 32, step: 1, unit: '' });
+    if (g <= 3) numberField(s, geoOpts, { key: 'radius', label: 'Raio', min: 5, max: 1500, step: 1, unit: 'px' });
+    if (g === 1) numberField(s, geoOpts, { key: 'inner', label: 'Raio de dentro', min: 5, max: 95, step: 1, unit: '%' });
+    if (g === 2) { numberField(s, geoOpts, { key: 'start', label: 'Começa em', min: -360, max: 360, step: 1, unit: '°' }); numberField(s, geoOpts, { key: 'sweep', label: 'Abertura', min: 5, max: 360, step: 1, unit: '°' }); }
+    if (g === 2 || g === 3 || g === 4 || g === 5) numberField(s, geoOpts, { key: 'thick', label: 'Grossura', min: 2, max: 200, step: 1, unit: 'px' });
+    if (g === 4) { numberField(s, geoOpts, { key: 'turns', label: 'Voltas', min: 0.5, max: 8, step: 0.25, unit: '' }); numberField(s, geoOpts, { key: 'r0', label: 'Raio inicial', min: 0, max: 1000, step: 1, unit: 'px' }); numberField(s, geoOpts, { key: 'radius', label: 'Raio final', min: 5, max: 1500, step: 1, unit: 'px' }); }
+    if (g === 5) { numberField(s, geoOpts, { key: 'len', label: 'Comprimento', min: 20, max: 3000, step: 1, unit: 'px' }); numberField(s, geoOpts, { key: 'amp', label: 'Altura da onda', min: 0, max: 600, step: 1, unit: 'px' }); numberField(s, geoOpts, { key: 'waves', label: 'Ondas', min: 0.5, max: 12, step: 0.5, unit: '' }); }
+    const gb = el('button', 'pf-btn pf-btn-primary w-full mb-3', 'Gerar (troca os pontos)');
+    gb.addEventListener('click', () => {
+      const o = geoOpts;
+      const set = (pts, closed, smooth, hollow) => Object.assign(h, { pts, closed, smooth, hollow, pivotX: 0, pivotY: 0 });
+      if (g === 0) set(G.polygon(o.sides, o.radius), 1, 0, h.hollow);
+      else if (g === 1) set(G.star(o.sides, o.radius, o.inner / 100), 1, 0, h.hollow);
+      else if (g === 2) set(G.arc(o.radius, o.start, o.sweep), 0, 0, 0);
+      else if (g === 3) set(G.polygon(48, o.radius), 1, 0, 1);
+      else if (g === 4) set(G.spiral(o.turns, o.r0, o.radius), 0, 1, 0);
+      else set(G.wave(o.len, o.amp, o.waves), 0, 1, 0);
+      if (g >= 2) h.stroke = o.thick;
+      PF.app.vtx = null;
+      P.rebuild();
+      PF.app.commit();
+    });
+    s.appendChild(gb);
+
+    // operações nos pontos
+    numberField(s, geoOpts, { key: 'd', label: 'Distância (chanfro, contorno, unir)', min: 1, max: 400, step: 1, unit: 'px' });
+    const c = !!h.closed;
+    let r = row();
+    op(r, 'Suavizar', 'Cada canto vira dois pontos (Chaikin); repita para ficar mais redondo', () => { h.pts = G.chaikin(h.pts, c); });
+    op(r, 'Simplificar', 'Tira pontos que quase não mudam o desenho', () => { h.pts = G.simplify(h.pts, c, geoOpts.tol); });
+    r = row();
+    op(r, 'Chanfrar cantos', 'Corta cada canto na distância (bevel)', () => { h.pts = G.bevel(h.pts, c, geoOpts.d); });
+    op(r, 'Arredondar cantos', 'Cantos redondos na distância (fillet)', () => { h.pts = G.fillet(h.pts, c, geoOpts.d); });
+    r = row();
+    op(r, 'Engordar contorno', 'Desloca o contorno para fora pela distância', () => { h.pts = G.offset(h.pts, c, geoOpts.d); });
+    op(r, 'Afinar contorno', 'Desloca o contorno para dentro pela distância', () => { h.pts = G.offset(h.pts, c, -geoOpts.d); });
+    r = row();
+    op(r, 'Unir pontos perto', 'Junta pontos vizinhos mais perto que a distância (weld)', () => { h.pts = G.merge(h.pts, c, geoOpts.d); });
+    op(r, c ? 'Abrir caminho' : 'Fechar caminho', c ? 'Vira uma linha aberta' : 'Liga o último ponto ao primeiro', () => { h.closed = c ? 0 : 1; if (h.closed && h.pts.length < 6) h.closed = 0; });
+    r = row();
+    op(r, 'Inverter ↔', 'Espelha na horizontal (flip)', () => { h.pts = G.flip(h.pts, 0); h.pivotX = -h.pivotX; });
+    op(r, 'Inverter ↕', 'Espelha na vertical (flip)', () => { h.pts = G.flip(h.pts, 1); h.pivotY = -h.pivotY; });
+    numberField(s, geoOpts, { key: 'skew', label: 'Inclinar', min: -80, max: 80, step: 1, unit: '°' });
+    r = row();
+    op(r, 'Inclinar X', 'Skew/shear na horizontal', () => { h.pts = G.skew(h.pts, geoOpts.skew, 0); });
+    op(r, 'Inclinar Y', 'Skew/shear na vertical', () => { h.pts = G.skew(h.pts, 0, geoOpts.skew); });
+    numberField(s, geoOpts, { key: 'sx', label: 'Esticar X', min: 5, max: 500, step: 1, unit: '%' });
+    numberField(s, geoOpts, { key: 'sy', label: 'Esticar Y', min: 5, max: 500, step: 1, unit: '%' });
+    r = row();
+    op(r, 'Esticar / achatar', 'Stretch/squash pelos dois valores', () => { h.pts = G.stretch(h.pts, geoOpts.sx / 100, geoOpts.sy / 100); });
+    op(r, 'Pivô no centro', 'Põe o pivô no meio dos pontos (a forma não sai do lugar)', () => {
+      G.recenter(h);
+      const [cx, cy] = PF.m.apply(PF.hz.shapeMatrix(h), 0, 0);
+      h.x = Math.round(cx * 100) / 100; h.y = Math.round(cy * 100) / 100; h.pivotX = 0; h.pivotY = 0;
+    });
+    r = row();
+    op(r, 'Exportar SVG', 'Baixa esta forma como .svg', () => G.download('forma-' + h.id + '.svg', G.toSVG([h]), 'image/svg+xml'));
+    const imp = el('button', 'pf-btn', 'Importar SVG');
+    imp.title = 'Cria formas a partir de um arquivo .svg';
+    imp.addEventListener('click', () => P.importSVG());
+    r.appendChild(imp);
+  }
+
+  // Importar SVG: cada caminho do arquivo vira uma Forma; com vários, já vêm agrupados
+  P.importSVG = function () {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.svg,image/svg+xml';
+    inp.addEventListener('change', () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      f.text().then(txt => {
+        const app = PF.app, list = PF.geo.shapesFromSVG(txt);
+        if (!list.length) { if (PF.toast) PF.toast('Nenhuma forma encontrada no SVG (path, polygon, rect, circle…)', 'error', 'svg'); return; }
+        const t0 = app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : Math.round(app.t * 100) / 100;
+        for (const h of list) { h.time = Math.max(0, Math.min(app.level.duration, t0)); app.level.hazards.push(h); }
+        if (list.length > 1) { app.selectList(list); PF.mass.group(); } else { app.select(list[0].id); app.commit(); }
+        if (PF.toast) PF.toast(list.length + ' forma(s) importada(s) do SVG', 'info', 'svg');
+      }).catch(() => { if (PF.toast) PF.toast('Não deu para ler esse SVG', 'error', 'svg'); });
+    });
+    inp.click();
+  };
+
   // ---------- itens do grupo ----------
   let openItem = null; // item do grupo aberto para edição (só no editor)
   const KIND_NAME = ['Círculo', 'Quadrado', 'Triângulo', 'Laser'];
@@ -538,6 +651,12 @@
 
     buildRhythm(lvl);
     buildPresets();
+    const sv = section('Formas');
+    const ib = el('button', 'pf-btn w-full', 'Importar SVG');
+    ib.title = 'Cria formas de pontos a partir de um arquivo .svg';
+    ib.addEventListener('click', () => P.importSVG());
+    sv.appendChild(ib);
+    sv.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed', 'P = caneta: clique põe ponto, arrastar desenha à mão livre, clique no 1º ponto fecha, Enter ou duplo clique termina.'));
 
     const sp = section('Jogador');
     numberField(sp, lvl.spawn, { key: 'x', label: 'Início X', min: 12, max: W - 12, step: 1, unit: 'px' });
@@ -563,6 +682,7 @@
     const items = [
       ['1 – 9, 0','escolher perigo e clicar no mapa'],
       ['F', 'forma livre (círculo, quadrado, triângulo, laser)'],
+      ['P', 'caneta: pontos / pincel à mão livre'],
       ['Shift+clique', 'somar à seleção (mapa e timeline)'],
       ['Ctrl+A', 'selecionar tudo'],
       ['Ctrl+G', 'agrupar formas (pivô coletivo, repetidor)'],

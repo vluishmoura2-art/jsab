@@ -42,6 +42,7 @@
     for (const h of list) {
       place(h, cx + (h.x - cx) * k, cy + (h.y - cy) * k);
       if (h.type === 'shape') {
+        if (h.kind === 4) h.pts = PF.geo.stretch(h.pts, k, k);
         h.w = u.clamp(u.round(h.w * k, 2), 4, 3000);
         h.h = u.clamp(u.round(h.h * k, 2), 2, 3000);
         h.stroke = u.clamp(u.round(h.stroke * k, 2), 2, 200);

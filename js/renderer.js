@@ -293,14 +293,48 @@
       const o = PF.hz.shapePose(h, b.start);
       path.push({ bi, ox: o.x, oy: o.y, pts: [['c1x', 'c1y'], ['c2x', 'c2y'], ['ex', 'ey']].map(([kx, ky]) => ({ kx, ky, x: o.x + b[kx], y: o.y + b[ky] })) });
     });
+    // topo da forma em coords locais (no caminho: a caixa dos pontos)
+    let tx = 0, ty = -h.h / 2;
+    if (h.kind === 4 && h.pts.length) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity;
+      for (let i = 0; i < h.pts.length; i += 2) { x0 = Math.min(x0, h.pts[i]); x1 = Math.max(x1, h.pts[i]); y0 = Math.min(y0, h.pts[i + 1]); }
+      tx = (x0 + x1) / 2; ty = y0;
+    }
+    const rotLocal = [tx, ty - 30 / scale];
+    // pontos do caminho no mundo (para arrastar)
+    const verts = [];
+    if (h.kind === 4) for (let i = 0; i < h.pts.length; i += 2) verts.push(PF.m.apply(m, h.pts[i], h.pts[i + 1]));
     return {
-      rot: PF.m.apply(m, 0, -h.h / 2 - 30 / scale),
-      top: PF.m.apply(m, 0, -h.h / 2),
-      size: PF.m.apply(m, h.w / 2, h.h / 2),
+      rot: PF.m.apply(m, rotLocal[0], rotLocal[1]),
+      rotLocal,
+      top: PF.m.apply(m, tx, ty),
+      size: h.kind === 4 ? null : PF.m.apply(m, h.w / 2, h.h / 2), // caminho: tamanho pelos pontos/painel
       pivot: [h.x, h.y],
+      verts,
       path,
     };
   };
+
+  // Caneta: linha do último ponto até o mouse e o círculo para fechar no primeiro
+  function penGizmo(ctx, app, scale) {
+    const pen = app.pen, h = pen && app.level.hazards.find(z => z.id === pen.id);
+    if (!h || !pen.hover) return;
+    const m = PF.hz.shapeMatrix(h), n = h.pts.length / 2;
+    const [lx, ly] = PF.m.apply(m, h.pts[h.pts.length - 2], h.pts[h.pts.length - 1]);
+    const [fx, fy] = PF.m.apply(m, h.pts[0], h.pts[1]);
+    ctx.save();
+    ctx.strokeStyle = C.accent;
+    ctx.lineWidth = 1.5 / scale;
+    ctx.setLineDash([4 / scale, 4 / scale]);
+    ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(pen.hover.x, pen.hover.y); ctx.stroke();
+    ctx.setLineDash([]);
+    if (n >= 3) {
+      const close = Math.hypot(pen.hover.x - fx, pen.hover.y - fy) <= 10 / scale;
+      ctx.globalAlpha = close ? 1 : 0.5;
+      ctx.beginPath(); ctx.arc(fx, fy, 8 / scale, 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // rastro do pivô durante o tempo ativo (só se algum comportamento mexe na posição)
   function motionTrail(ctx, h, scale) {
@@ -392,7 +426,7 @@
       const loc = PF.hz.shapeLocal(h);
       for (let i = 0; i < loc.length; i += 2) { const [x, y] = PF.m.apply(m, loc[i], loc[i + 1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
     }
-    ctx.closePath();
+    if (!(h.kind === 4 && !h.closed)) ctx.closePath(); // caminho aberto não fecha
     ctx.stroke();
     ctx.setLineDash([]);
     const hd = PF.shapeHandles(h, scale), r = (sel ? 6 : 4.5) / scale;
@@ -458,7 +492,14 @@
       ctx.fillStyle = C.bg; ctx.fill(); ctx.stroke();
       const s = 4.5 / scale; // quadradinho do tamanho
       ctx.fillStyle = C.accent;
-      ctx.fillRect(hd.size[0] - s, hd.size[1] - s, s * 2, s * 2);
+      if (hd.size) ctx.fillRect(hd.size[0] - s, hd.size[1] - s, s * 2, s * 2);
+      // pontos do caminho: quadradinhos ocos (o escolhido fica cheio)
+      hd.verts.forEach(([vx, vy], i) => {
+        const q = (i === PF.app.vtx ? 5 : 3.5) / scale;
+        ctx.fillStyle = i === PF.app.vtx ? C.accent : C.bg;
+        ctx.fillRect(vx - q, vy - q, q * 2, q * 2);
+        ctx.strokeRect(vx - q, vy - q, q * 2, q * 2);
+      });
     }
     // pivô: losango (a cor do acento quando selecionado)
     ctx.beginPath();
@@ -546,6 +587,7 @@
 
     if (app.mode === 'edit') {
       gizmos(ctx, app, view.scale);
+      if (app.pen) penGizmo(ctx, app, view.scale);
       spawnMarker(ctx, app, view.scale);
     }
     if (T) {
