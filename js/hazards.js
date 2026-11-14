@@ -829,6 +829,241 @@
     return out;
   }
 
+  // ---------- gatilhos e ações (modo manual) ----------
+  // Um gatilho diz QUANDO (ao aparecer, num tempo, na batida, na meia batida, quando um
+  // comportamento termina, no fim) e uma ação diz O QUÊ (rajada, explodir, dividir, convergir,
+  // espelhar, acelerar, transformar, sumir). Tudo é calculado antes, a partir do tempo: os
+  // disparos viram uma lista de eventos com instante e pose fixos (shapeEvents), então a forma
+  // continua sendo função pura do tempo (scrub, levelCheck e servidor funcionam igual).
+  const TRG_SPAWN = 0, TRG_TIME = 1, TRG_BEAT = 2, TRG_HALF = 3, TRG_KEY = 4, TRG_END = 5, TRG_NEAR = 6, TRG_TOUCH = 7;
+  // Reativos (perto do jogador / encostar no jogador) dependem de onde o jogador está:
+  // no modo teste disparam de verdade (REACT, preenchido pelo main.js); no editor a prévia
+  // imagina o jogador parado no início da fase; o levelCheck e o servidor os ignoram.
+  const isReactive = t => t.when === TRG_NEAR || t.when === TRG_TOUCH;
+  let REACT = null, SPAWN = { x: W / 2, y: H / 2 };
+  const MAX_TRIGGERS = 8, MAX_FIRES = 64, MAX_CHILDREN = 1500;
+  const TRG_WHEN = [
+    { key: 'when', label: 'Quando', type: 'select', options: [
+      [TRG_SPAWN, 'Ao aparecer (On Spawn)'], [TRG_TIME, 'Num tempo (On Time)'], [TRG_BEAT, 'Na batida (On Beat)'],
+      [TRG_HALF, 'Na meia batida (On Half Beat)'], [TRG_KEY, 'Fim de comportamento (On Keyframe)'], [TRG_END, 'No fim (On End)'],
+      [TRG_NEAR, 'Jogador perto (On Proximity)'], [TRG_TOUCH, 'Encostar no jogador (On Collision)']] },
+    { key: 'at', label: 'Tempo (depois de ativa)', min: 0, max: 600, step: 0.05, unit: 's', show: [TRG_TIME] },
+    { key: 'every', label: 'A cada', min: 0.25, max: 64, step: 0.25, unit: 'bt', show: [TRG_BEAT] },
+    { key: 'from', label: 'A partir de', min: 0, max: 600, step: 0.05, unit: 's', show: [TRG_BEAT, TRG_HALF] },
+    { key: 'times', label: 'Quantas vezes (0 = até o fim)', min: 0, max: MAX_FIRES, step: 1, unit: '', show: [TRG_BEAT, TRG_HALF] },
+    { key: 'beh', label: 'Comportamento nº', min: 1, max: 12, step: 1, unit: '', show: [TRG_KEY] },
+    { key: 'dist', label: 'Distância', min: 10, max: 1500, step: 5, unit: 'px', show: [TRG_NEAR] },
+  ];
+  const TRG_LEAD = { key: 'lead', label: 'Aviso antes', min: 0, max: 4, step: 0.05, unit: 's' };
+  const SHOT = [ // parâmetros dos tiros (rajada/explodir)
+    { key: 'count', label: 'Quantidade', min: 1, max: 48, step: 1, unit: '' },
+    { key: 'angle', label: 'Ângulo (0 = →)', min: -180, max: 180, step: 1, unit: '°' },
+    { key: 'spread', label: 'Abertura (360 = em volta)', min: 0, max: 360, step: 5, unit: '°' },
+    { key: 'speed', label: 'Velocidade', min: 20, max: 3000, step: 10, unit: 'px/s' },
+    { key: 'size', label: 'Tamanho', min: 2, max: 200, step: 1, unit: 'px' },
+    { key: 'life', label: 'Duração', min: 0.1, max: 20, step: 0.1, unit: 's' },
+    { key: 'aim', label: 'Direção', type: 'select', options: [[0, 'Fixa'], [1, 'Gira com a forma']] },
+  ];
+  const SHAPE_KINDS = [[0, 'Círculo'], [1, 'Quadrado'], [2, 'Triângulo'], [3, 'Laser']];
+
+  PF.TRIGGER_ACTIONS = {
+    burst: { label: 'Rajada (Burst)', children: true, params: SHOT,
+      defaults: { count: 8, angle: 0, spread: 360, speed: 360, size: 12, life: 3, aim: 0 } },
+    explode: { label: 'Explodir (Explode)', children: true, hides: true, params: SHOT,
+      defaults: { count: 14, angle: 0, spread: 360, speed: 420, size: 10, life: 3, aim: 0 } },
+    split: { label: 'Dividir (Split)', children: true, hides: true, params: [
+      { key: 'count', label: 'Cópias', min: 2, max: 16, step: 1, unit: '' },
+      { key: 'angle', label: 'Ângulo (0 = →)', min: -180, max: 180, step: 1, unit: '°' },
+      { key: 'speed', label: 'Velocidade', min: 0, max: 3000, step: 10, unit: 'px/s' },
+      { key: 'size', label: 'Tamanho das cópias', min: 5, max: 200, step: 1, unit: '%' },
+      { key: 'spin', label: 'Giro das cópias', min: -1440, max: 1440, step: 5, unit: '°/s' },
+      { key: 'life', label: 'Duração', min: 0.1, max: 20, step: 0.1, unit: 's' }],
+      defaults: { count: 4, angle: 45, speed: 260, size: 50, spin: 180, life: 2.5 } },
+    converge: { label: 'Convergir (Converge)', children: true, params: [
+      { key: 'count', label: 'Quantidade', min: 1, max: 48, step: 1, unit: '' },
+      { key: 'radius', label: 'De que distância', min: 20, max: 2000, step: 5, unit: 'px' },
+      { key: 'time', label: 'Tempo até o centro', min: 0.05, max: 10, step: 0.05, unit: 's' },
+      { key: 'size', label: 'Tamanho', min: 2, max: 200, step: 1, unit: 'px' }],
+      defaults: { count: 12, radius: 280, time: 0.9, size: 10 } },
+    mirror: { label: 'Espelhar (Mirror)', children: true, params: [
+      { key: 'axis', label: 'Espelho', type: 'select', options: [[0, 'Esquerda ↔ direita'], [1, 'Cima ↔ baixo'], [2, 'Pelo centro']] }],
+      defaults: { axis: 0 } },
+    accel: { label: 'Acelerar (Accelerate)', params: [
+      { key: 'mult', label: 'Velocidade nova', min: 0, max: 10, step: 0.05, unit: '×' },
+      { key: 'ramp', label: 'Em quanto tempo', min: 0, max: 10, step: 0.05, unit: 's' }],
+      defaults: { mult: 2.5, ramp: 0.3 } },
+    transform: { label: 'Transformar (Transform)', params: [
+      { key: 'kind', label: 'Vira', type: 'select', options: SHAPE_KINDS },
+      { key: 'size', label: 'Tamanho', min: 5, max: 500, step: 1, unit: '%' }],
+      defaults: { kind: 0, size: 100 } },
+    despawn: { label: 'Sumir', hides: true, params: [], defaults: {} },
+  };
+
+  function newTrigger(action = 'burst') {
+    const def = PF.TRIGGER_ACTIONS[action];
+    return { on: 1, when: TRG_BEAT, at: 0, every: 1, from: 0, times: 4, beh: 1, dist: 180, lead: 0.4, action,
+      ...JSON.parse(JSON.stringify(def.defaults)) };
+  }
+  function normTriggers(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const r of raw) {
+      if (out.length >= MAX_TRIGGERS) break;
+      const def = r && PF.TRIGGER_ACTIONS[r.action];
+      if (!def) continue;
+      const base = newTrigger(r.action);
+      const t = { on: r.on === 0 || r.on === false ? 0 : 1, action: r.action };
+      for (const p of TRG_WHEN) t[p.key] = normProp(r, p, base[p.key]);
+      t.lead = normProp(r, TRG_LEAD, base.lead);
+      for (const p of def.params) t[p.key] = normProp(r, p, def.defaults[p.key]);
+      out.push(t);
+    }
+    return out;
+  }
+
+  // instantes (s depois de ativa) em que o gatilho dispara
+  function triggerTimes(h, t, ti) {
+    const A = h.active;
+    if (isReactive(t)) {
+      if (REACT) { const v = REACT.get(h.id + ':' + ti); return v != null && v <= A ? [v] : []; }
+      if (!PF.hz.preview) return [];
+      // prévia no editor: primeiro instante em que o jogador parado no início seria alcançado
+      const pr = PF.PLAYER ? PF.PLAYER.r : 8;
+      for (let bt = 0; bt <= A; bt += 1 / 30) {
+        const p = shapePose(h, bt);
+        if (t.when === TRG_NEAR ? Math.hypot(p.x - SPAWN.x, p.y - SPAWN.y) < t.dist
+          : parentShapesAt(h, p).some(s => PF.hz.hitsPlayer(s, SPAWN.x, SPAWN.y, pr))) return [Math.min(A, bt + t.lead)];
+      }
+      return [];
+    }
+    if (t.when === TRG_SPAWN) return [0];
+    if (t.when === TRG_TIME) return t.at <= A ? [t.at] : [];
+    if (t.when === TRG_END) return [A];
+    if (t.when === TRG_KEY) {
+      const b = h.behaviors[t.beh - 1];
+      if (!b) return [];
+      let e = b.end > b.start ? b.end : (b.time ? b.start + b.time : -1); // investida/caminho/crescer têm duração
+      return e >= 0 && e <= A ? [e] : [];
+    }
+    // batida / meia batida: na grade da música (tempo da fase), não a partir do começo da forma
+    const step = (t.when === TRG_HALF ? 0.5 : t.every) * BEAT;
+    const act = h.time + h.warn, T0 = act + t.from;
+    let k = Math.ceil((T0 - OFFSET) / step - 1e-6);
+    const out = [], max = t.times > 0 ? t.times : MAX_FIRES;
+    for (; out.length < max; k++) {
+      const at = OFFSET + k * step - act;
+      if (at > A + 1e-6) break;
+      out.push(Math.max(0, at));
+    }
+    return out;
+  }
+
+  // a forma acelera: o relógio dos comportamentos anda "mult" vezes mais rápido depois do evento
+  function warpTime(ev, bt) {
+    let w = bt;
+    for (const a of ev.accels) {
+      const d = bt - a.at;
+      if (d <= 0) continue;
+      const m = a.t.mult - 1, r = a.t.ramp;
+      w += r > 0 && d < r ? m * d * d / (2 * r) : m * (d - r / 2);
+    }
+    return w;
+  }
+
+  // Eventos da forma: lista ordenada com instante e pose; quando ela some; acelerações;
+  // transformações; espelhos; e até quando vão os filhos (para o tamanho do bloco).
+  const evCache = new WeakMap();
+  function shapeEvents(h) {
+    let sig = JSON.stringify(h) + '|' + BEAT + '|' + OFFSET;
+    if ((h.triggers || []).some(isReactive)) { // disparos reativos mudam os eventos
+      sig += REACT ? '|R' + (h.triggers || []).map((t, i) => REACT.get(h.id + ':' + i)).join(',')
+        : PF.hz.preview ? '|P' + SPAWN.x + ',' + SPAWN.y : '|-';
+    }
+    const c = evCache.get(h);
+    if (c && c.sig === sig) return c.ev;
+    const raw = [];
+    (h.triggers || []).forEach((t, ti) => {
+      if (!t.on || !PF.TRIGGER_ACTIONS[t.action]) return;
+      for (const at of triggerTimes(h, t, ti)) raw.push({ t, at });
+    });
+    raw.sort((a, b) => a.at - b.at);
+    let hideAt = Infinity;
+    for (const e of raw) if (PF.TRIGGER_ACTIONS[e.t.action].hides) { hideAt = e.at; break; }
+    const ev = { list: [], accels: [], transforms: [], mirrors: [], hideAt, maxEnd: 0 };
+    let children = 0, kind = h.kind, ks = 1;
+    for (const e of raw) {
+      if (e.at > hideAt) break;
+      const a = e.t.action;
+      if (a === 'accel') ev.accels.push(e);
+      if (a === 'transform') { kind = e.t.kind; ks = e.t.size / 100; ev.transforms.push(e); }
+      const n = a === 'burst' || a === 'explode' || a === 'converge' || a === 'split' ? e.t.count : 0;
+      if (children + n > MAX_CHILDREN) continue; // limite de segurança
+      children += n;
+      const p = shapePose(h, warpTime(ev, e.at), h.time + h.warn + e.at);
+      Object.assign(e, { x: p.x, y: p.y, rot: p.rot, s: p.s, kind, ks });
+      if (a === 'mirror') ev.mirrors.push(e);
+      const end = a === 'converge' ? e.at + e.t.time : e.t.life ? e.at + e.t.life : e.at;
+      ev.maxEnd = Math.max(ev.maxEnd, end);
+      ev.list.push(e);
+    }
+    evCache.set(h, { sig, ev });
+    return ev;
+  }
+
+  const MIRROR = [[-1, 0, 0, 1, W, 0], [1, 0, 0, -1, 0, H], [-1, 0, 0, -1, W, H]];
+  const shotAngle = (t, i, rot) => {
+    const base = t.angle + (t.aim ? rot : 0);
+    if (t.spread >= 360) return (base + 360 * i / t.count) * D2R;
+    return (t.count > 1 ? base - t.spread / 2 + t.spread * i / (t.count - 1) : base) * D2R;
+  };
+
+  // filhos de um evento (tiros, cópias, bolinhas que convergem) e o aviso antes dele
+  function emitChildren(h, e, bt, out) {
+    const t = e.t, a = t.action, dt = bt - e.at;
+    if (dt < 0) {
+      if (dt < -t.lead || !t.lead) return;
+      const pr = 1 + dt / t.lead, al = 0.08 + 0.35 * pr;
+      if (a === 'burst' || a === 'explode' || a === 'split') { // linhas de mira
+        const n = a === 'split' ? t.count : t.count;
+        const len = Math.min(170, (t.speed || 200) * 0.45);
+        for (let i = 0; i < n; i++) {
+          const g = a === 'split' ? (t.angle + 360 * i / t.count) * D2R : shotAngle(t, i, e.rot);
+          out.push({ kind: 'line', x1: e.x, y1: e.y, x2: e.x + Math.cos(g) * len, y2: e.y + Math.sin(g) * len, w: 3, state: 'warn', alpha: al });
+        }
+      } else if (a === 'converge') {
+        out.push({ kind: 'ring', x: e.x, y: e.y, r: t.radius, w: 3, state: 'warn', alpha: al });
+        for (let i = 0; i < t.count; i++) {
+          const g = TAU * i / t.count;
+          out.push({ kind: 'circle', x: e.x + Math.cos(g) * t.radius, y: e.y + Math.sin(g) * t.radius, r: t.size, state: 'warn', alpha: al });
+        }
+      }
+      return;
+    }
+    if (a === 'burst' || a === 'explode') {
+      if (dt > t.life) return;
+      for (let i = 0; i < t.count; i++) {
+        const g = shotAngle(t, i, e.rot), x = e.x + Math.cos(g) * t.speed * dt, y = e.y + Math.sin(g) * t.speed * dt;
+        if (!off(x, y, t.size)) out.push({ kind: 'circle', x, y, r: t.size, state: 'active', alpha: 1 });
+      }
+    } else if (a === 'split') {
+      if (dt > t.life) return;
+      const fade = dt > t.life - 0.2 ? (t.life - dt) / 0.2 : 1;
+      for (let i = 0; i < t.count; i++) {
+        const g = (t.angle + 360 * i / t.count) * D2R;
+        const pose = { x: e.x + Math.cos(g) * t.speed * dt, y: e.y + Math.sin(g) * t.speed * dt,
+          rot: e.rot + t.spin * dt, s: e.s * t.size / 100, ks: e.ks, kind: e.kind };
+        if (!off(pose.x, pose.y, Math.max(h.w, h.h) * pose.s)) shapeOut(h, 1, { state: fade < 1 ? 'fx' : 'active', alpha: fade }, out, pose);
+      }
+    } else if (a === 'converge') {
+      if (dt > t.time) return;
+      const r = t.radius * (1 - dt / t.time);
+      for (let i = 0; i < t.count; i++) {
+        const g = TAU * i / t.count;
+        out.push({ kind: 'circle', x: e.x + Math.cos(g) * r, y: e.y + Math.sin(g) * r, r: t.size, state: 'active', alpha: 1 });
+      }
+    }
+  }
+
   // ---------- Forma (modo manual) ----------
   // Círculo, quadrado, triângulo ou laser com rotação e ponto de pivô. (x, y) é onde fica o pivô;
   // pivotX/pivotY é o pivô em relação ao centro da forma, antes de girar. Os comportamentos
@@ -850,33 +1085,38 @@
     return { x: h.x + d.x, y: h.y + d.y, rot: h.rot + d.rot, s: d.s };
   }
   const REST = h => ({ x: h.x, y: h.y, rot: h.rot, s: 1 });
-  const shapeMatrix = (h, k = 1, pose = REST(h)) =>
-    PF.m.compose(pose.x, pose.y, pose.rot, k * pose.s, k * pose.s, h.pivotX, h.pivotY);
+  // pre: matriz aplicada depois (ex.: espelho)
+  const shapeMatrix = (h, k = 1, pose = REST(h), pre) => {
+    const sk = k * pose.s * (pose.ks || 1);
+    const m = PF.m.compose(pose.x, pose.y, pose.rot, sk, sk, h.pivotX, h.pivotY);
+    return pre ? PF.m.mul(pre, m) : m;
+  };
   // contorno da forma em coords locais (centro em 0,0), como lista x,y,x,y…
-  function shapeLocal(h) {
+  function shapeLocal(h, kind = h.kind) {
     const w2 = h.w / 2, h2 = h.h / 2;
-    if (h.kind === SHP_SQUARE) return [-w2, -h2, w2, -h2, w2, h2, -w2, h2];
-    if (h.kind === SHP_TRI) return [0, -h2, w2, h2, -w2, h2];
+    if (kind === SHP_SQUARE) return [-w2, -h2, w2, -h2, w2, h2, -w2, h2];
+    if (kind === SHP_TRI) return [0, -h2, w2, h2, -w2, h2];
     const n = 32, pts = []; // elipse
     for (let i = 0; i < n; i++) { const a = TAU * i / n; pts.push(Math.cos(a) * w2, Math.sin(a) * h2); }
     return pts;
   }
   // formas prontas para desenhar/colidir, com escala extra k (o "pop" ao aparecer)
-  function shapeOut(h, k, base, out, pose) {
-    const m = shapeMatrix(h, k, pose);
-    const sk = k * (pose ? pose.s : 1);
-    if (h.kind === SHP_LASER) {
+  function shapeOut(h, k, base, out, pose, pre) {
+    const m = shapeMatrix(h, k, pose, pre);
+    const kind = pose && pose.kind != null ? pose.kind : h.kind;
+    const sk = k * (pose ? pose.s * (pose.ks || 1) : 1);
+    if (kind === SHP_LASER) {
       const [x1, y1] = PF.m.apply(m, -h.w / 2, 0), [x2, y2] = PF.m.apply(m, h.w / 2, 0);
       out.push({ ...base, kind: 'line', x1, y1, x2, y2, w: h.h * sk });
       return;
     }
-    if (h.kind === SHP_CIRCLE && h.w === h.h) { // círculo de verdade: mais barato que o polígono
+    if (kind === SHP_CIRCLE && h.w === h.h) { // círculo de verdade: mais barato que o polígono
       const [x, y] = PF.m.apply(m, 0, 0), r = h.w / 2 * sk;
       if (h.hollow) out.push({ ...base, kind: 'ring', x, y, r, w: Math.min(h.stroke, h.w) * sk });
       else out.push({ ...base, kind: 'circle', x, y, r });
       return;
     }
-    const loc = shapeLocal(h), pts = [];
+    const loc = shapeLocal(h, kind), pts = [];
     for (let i = 0; i < loc.length; i += 2) pts.push(...PF.m.apply(m, loc[i], loc[i + 1]));
     if (!h.hollow) { out.push({ ...base, kind: 'poly', pts }); return; }
     const n = pts.length / 2; // vazada: uma linha por lado, centrada no contorno
@@ -885,13 +1125,27 @@
       out.push({ ...base, kind: 'line', x1: pts[i * 2], y1: pts[i * 2 + 1], x2: pts[j * 2], y2: pts[j * 2 + 1], w: h.stroke * sk });
     }
   }
+  // formas ativas da própria forma numa pose (para "encostar no jogador")
+  function parentShapesAt(h, pose) {
+    const tmp = [];
+    shapeOut(h, 1, { state: 'active', alpha: 1 }, tmp, pose);
+    return tmp;
+  }
+  // pose da forma no tempo bt, com aceleração e transformação aplicadas
+  function livePose(h, ev, bt) {
+    const p = shapePose(h, warpTime(ev, bt), h.time + h.warn + bt);
+    let tr = null;
+    for (const e of ev.transforms) if (e.at <= bt) tr = e;
+    if (tr) { p.kind = tr.kind; p.ks = tr.ks; p.trAt = tr.at; }
+    return p;
+  }
 
   PF.HAZARDS.shape = {
     label: 'Forma',
-    desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma. Em "Comportamentos" você empilha movimentos (mover, onda, órbita, caminho, pulsar…): eles começam quando a forma fica ativa e são aplicados de cima para baixo.',
-    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1, behaviors: [] },
+    desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma. Em "Comportamentos" você empilha movimentos (mover, onda, órbita, caminho, pulsar…): eles começam quando a forma fica ativa e são aplicados de cima para baixo. Em "Gatilhos" você escolhe quando (na batida, num tempo…) ela faz uma ação (rajada, explodir, dividir…); os losangos no bloco da timeline mostram os disparos.',
+    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1, behaviors: [], triggers: [] },
     props: [
-      { key: 'kind', label: 'Forma', type: 'select', options: [[SHP_CIRCLE, 'Círculo'], [SHP_SQUARE, 'Quadrado'], [SHP_TRI, 'Triângulo'], [SHP_LASER, 'Laser']] },
+      { key: 'kind', label: 'Forma', type: 'select', options: SHAPE_KINDS },
       { key: 'w', label: 'Largura (laser: comprimento)', min: 4, max: 3000, step: 1, unit: 'px' },
       { key: 'h', label: 'Altura (laser: grossura)', min: 2, max: 3000, step: 1, unit: 'px' },
       { key: 'rot', label: 'Rotação', min: -360, max: 360, step: 1, unit: '°' },
@@ -902,15 +1156,31 @@
       WARN_PROP,
       { key: 'active', label: 'Tempo ativa', min: 0.05, max: 120, step: 0.05, unit: 's' },
     ],
-    extra(raw, h) { h.behaviors = normBehaviors(raw.behaviors); },
+    extra(raw, h) { h.behaviors = normBehaviors(raw.behaviors); h.triggers = normTriggers(raw.triggers); },
     lead: () => 0,
     warnLen: h => h.warn,
-    length: h => h.warn + h.active + FADE,
+    length: h => h.warn + Math.max(h.active, shapeEvents(h).maxEnd) + FADE,
     shapes(h, lt, out) {
       if (lt < 0) return;
-      const bt = Math.max(0, Math.min(lt - h.warn, h.active)); // no sumiço fica onde parou
-      const pose = shapePose(h, bt, h.time + h.warn + bt);
-      appearCycle(h, lt, out, ({ state, alpha, scale }) => { shapeOut(h, scale, { state, alpha }, out, pose); });
+      const ev = shapeEvents(h);
+      const bt = lt - h.warn;
+      const btc = Math.max(0, Math.min(bt, h.active)); // no aviso fica na pose inicial; no sumiço, onde parou
+      if (bt < ev.hideAt) {
+        const pose = livePose(h, ev, btc);
+        const tp = pose.trAt != null && btc - pose.trAt < 0.12 ? 1 + 0.35 * (1 - (btc - pose.trAt) / 0.12) : 1; // "pop" ao transformar
+        appearCycle(h, lt, out, ({ state, alpha, scale }) => {
+          shapeOut(h, scale * tp, { state, alpha }, out, pose);
+          for (const m of ev.mirrors) { // cópia espelhada (em aviso antes do evento)
+            const d = btc - m.at;
+            if (d >= 0) shapeOut(h, scale * tp, { state, alpha }, out, pose, MIRROR[m.t.axis]);
+            else if (m.t.lead && d > -m.t.lead) shapeOut(h, 1, { state: 'warn', alpha: 0.08 + 0.35 * (1 + d / m.t.lead) }, out, pose, MIRROR[m.t.axis]);
+          }
+        });
+      } else if (bt - ev.hideAt < 0.18) { // some com um brilho que cresce
+        const f = (bt - ev.hideAt) / 0.18, pose = livePose(h, ev, ev.hideAt);
+        shapeOut(h, 1 + f * 0.6, { state: 'fx', alpha: 1 - f }, out, pose);
+      }
+      for (const e of ev.list) if (PF.TRIGGER_ACTIONS[e.t.action].children && e.t.action !== 'mirror') emitChildren(h, e, bt, out);
     },
     hit(h, x, y, tol) {
       const test = pose => {
@@ -922,8 +1192,8 @@
       // também onde ela está agora (no editor), se estiver na tela
       const T = PF.app ? PF.app.t : null, lt = T == null ? -1 : T - h.time;
       if (lt < 0 || lt > h.warn + h.active) return false;
-      const bt = Math.max(0, lt - h.warn);
-      return test(shapePose(h, bt, h.time + h.warn + bt));
+      const ev = shapeEvents(h), bt = Math.max(0, lt - h.warn);
+      return bt < ev.hideAt && test(livePose(h, ev, bt));
     },
   };
 
@@ -966,9 +1236,24 @@
     shapePose,
     newBehavior,
     MAX_BEHAVIORS,
+    shapeEvents,
+    // pose com aceleração/transformação (como aparece no jogo) e até quando a forma existe
+    livePose: (h, bt) => livePose(h, shapeEvents(h), bt),
+    shapeEnd: h => Math.min(h.active, shapeEvents(h).hideAt),
+    newTrigger,
+    MAX_TRIGGERS,
+    TRG_WHEN,
+    TRG_LEAD,
     BEH_TIME,
     // batida da fase usada pelos comportamentos (sem BPM: 0,5 s)
+    preview: false, // o editor liga: prévia dos gatilhos reativos com o jogador no início
+    // modo teste: mapa "id:índice do gatilho" -> instante do disparo (null = fora do teste)
+    setReactive(map) { REACT = map; },
+    getReactive: () => REACT,
+    isReactive,
+    parentShapesAt,
     setBeat(level) {
+      if (level && level.spawn) SPAWN = level.spawn;
       BEAT = level && level.bpm > 0 ? 60 / level.bpm : 0.5;
       OFFSET = level && level.bpm > 0 ? level.offset || 0 : 0;
     },

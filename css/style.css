@@ -177,6 +177,9 @@ input[type=range] { accent-color: var(--pf-accent); height: 16px; cursor: pointe
 }
 .pf-card:hover { border-color: var(--pf-line-hi); }
 .pf-card input[type=checkbox] { accent-color: var(--pf-accent); }
+.pf-card .pf-select { max-width: 9.5rem; min-width: 0; text-overflow: ellipsis; }
+.pf-card label { min-width: 0; }
+#panel { overflow-x: hidden; }
 
 /* títulos de seção do painel: CH.01 · ... */
 #panel { counter-reset: ch; }

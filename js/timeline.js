@@ -159,6 +159,18 @@
       ctx.fillRect(Math.max(xa, xw), y, xb - Math.max(xa, xw), bh);
       ctx.fillStyle = C.danger;
       ctx.fillRect(xs - 1, y, 2, bh);
+      if (hz.type === 'shape') { // losangos nos disparos dos gatilhos
+        const ev = PF.hz.shapeEvents(hz);
+        ctx.fillStyle = sel ? C.accent : '#FFD3DA';
+        for (const e of ev.list) {
+          const xe = tx(hz.time + hz.warn + e.at), cy = y + bh / 2;
+          if (xe < xa - 4 || xe > xb + 4) continue;
+          ctx.beginPath();
+          ctx.moveTo(xe, cy - 4); ctx.lineTo(xe + 4, cy); ctx.lineTo(xe, cy + 4); ctx.lineTo(xe - 4, cy);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
       if (sel) {
         ctx.strokeStyle = C.accent;
         ctx.lineWidth = 1.5;

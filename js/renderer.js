@@ -301,11 +301,13 @@
   // rastro do pivô durante o tempo ativo (só se algum comportamento mexe na posição)
   function motionTrail(ctx, h, scale) {
     if (!h.behaviors || !h.behaviors.length) return;
-    const n = Math.min(240, Math.max(24, Math.ceil(h.active * 30)));
+    PF.hz.setBeat(PF.app.level);
+    const end = PF.hz.shapeEnd(h);
+    const n = Math.min(240, Math.max(24, Math.ceil(end * 30)));
     const pts = [];
     let moved = false;
     for (let i = 0; i <= n; i++) {
-      const p = PF.hz.shapePose(h, h.active * i / n);
+      const p = PF.hz.livePose(h, end * i / n);
       pts.push(p.x, p.y);
       if (Math.abs(p.x - h.x) > 0.5 || Math.abs(p.y - h.y) > 0.5) moved = true;
     }
@@ -343,6 +345,32 @@
     const hd = PF.shapeHandles(h, scale), r = (sel ? 6 : 4.5) / scale;
     if (sel || h.behaviors.length) motionTrail(ctx, h, scale);
     if (sel) {
+      // onde cada gatilho dispara (pequenos losangos; tiros mostram a direção)
+      PF.hz.setBeat(PF.app.level);
+      const ev = PF.hz.shapeEvents(h), q = 4 / scale;
+      ctx.save();
+      ctx.fillStyle = '#FFD3DA';
+      ctx.strokeStyle = '#FFD3DA';
+      for (const e of ev.list) {
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y - q); ctx.lineTo(e.x + q, e.y); ctx.lineTo(e.x, e.y + q); ctx.lineTo(e.x - q, e.y);
+        ctx.closePath();
+        ctx.fill();
+        const a = e.t.action;
+        if (a === 'burst' || a === 'explode') {
+          ctx.globalAlpha = 0.45;
+          ctx.beginPath();
+          const n = e.t.count, base = e.t.angle + (e.t.aim ? e.rot : 0);
+          for (let i = 0; i < n; i++) {
+            const g = (e.t.spread >= 360 ? base + 360 * i / n : n > 1 ? base - e.t.spread / 2 + e.t.spread * i / (n - 1) : base) * Math.PI / 180;
+            ctx.moveTo(e.x + Math.cos(g) * 8 / scale, e.y + Math.sin(g) * 8 / scale);
+            ctx.lineTo(e.x + Math.cos(g) * 26 / scale, e.y + Math.sin(g) * 26 / scale);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.restore();
       // pontos de controle das curvas: hastes até os controles, bolinhas arrastáveis
       for (const c of hd.path) {
         const [c1, c2, e] = c.pts;

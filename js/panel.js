@@ -117,7 +117,7 @@
     const s2 = section('Propriedades');
     for (const p of def.props) (p.type === 'select' ? selectField : rangeField)(s2, h, p);
 
-    if (h.type === 'shape') buildBehaviors(h);
+    if (h.type === 'shape') { buildBehaviors(h); buildTriggers(h); }
 
     const s3 = section();
     s3.appendChild(el('p', 'text-xs leading-relaxed text-pf-muted', def.desc));
@@ -245,6 +245,86 @@
     s.appendChild(add);
     s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed',
       '"bt" = batidas da fase (sem BPM, 1 batida = 0,5 s). "Pulsar na batida" segue a música. O tracejado no mapa é o caminho da forma.'));
+  }
+
+  // ---------- gatilhos da Forma ----------
+  function buildTriggers(h) {
+    const s = section('Gatilhos');
+    const list = h.triggers, A = PF.TRIGGER_ACTIONS;
+    const whenOpts = PF.hz.TRG_WHEN[0].options;
+    const whenName = w => (whenOpts.find(o => o[0] === w) || [0, ''])[1].replace(/ \(.*\)$/, '');
+    if (!list.length) {
+      s.appendChild(el('p', 'text-[11px] text-pf-muted mb-3 leading-relaxed',
+        'Nenhum. Um gatilho escolhe quando (na batida, num tempo, quando um comportamento termina…) a forma faz uma ação (rajada, explodir, dividir, espelhar…).'));
+    }
+    list.forEach((t, i) => {
+      const def = A[t.action];
+      const card = el('div', 'pf-card mb-2' + (t.on ? '' : ' opacity-50'));
+      const head = el('div', 'flex items-center gap-1.5 px-2 py-1.5 cursor-pointer');
+      const caret = el('span', 'text-pf-muted');
+      caret.innerHTML = `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8">${ICO.open}</svg>`;
+      if (!collapsed.has(t)) caret.style.transform = 'rotate(90deg)';
+      const on = el('input', 'shrink-0');
+      on.type = 'checkbox';
+      on.checked = !!t.on;
+      on.title = 'Ligar / desligar';
+      on.addEventListener('click', e => e.stopPropagation());
+      on.addEventListener('change', () => { t.on = on.checked ? 1 : 0; P.rebuild(); PF.app.commit(); });
+      const name = el('span', 'text-xs font-semibold flex-1 truncate', (i + 1) + '. ' + whenName(t.when) + ' → ' + def.label.replace(/ \(.*\)$/, ''));
+      name.title = name.textContent;
+      head.append(caret, on, name);
+      if (i > 0) head.appendChild(iconBtn('up', 'Subir', () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); P.rebuild(); PF.app.commit(); }));
+      head.appendChild(iconBtn('del', 'Remover', () => { list.splice(i, 1); P.rebuild(); PF.app.commit(); }));
+      head.addEventListener('click', () => { collapsed.has(t) ? collapsed.delete(t) : collapsed.add(t); P.rebuild(); });
+      card.appendChild(head);
+
+      if (!collapsed.has(t)) {
+        const body = el('div', 'px-2 pt-1 pb-1');
+        // quando: os campos mudam conforme o tipo
+        selectField(body, t, PF.hz.TRG_WHEN[0]);
+        body.lastChild.querySelector('select').addEventListener('change', () => P.rebuild());
+        for (const p of PF.hz.TRG_WHEN.slice(1)) if (p.show.includes(t.when)) numberField(body, t, p);
+        if (t.when === 4 && !h.behaviors[t.beh - 1]) {
+          body.appendChild(el('p', 'text-[10px] text-pf-danger mb-2', 'Não existe o comportamento nº ' + t.beh + '.'));
+        }
+        // ação: trocar recomeça os parâmetros dela
+        const row = el('div', 'flex items-center justify-between gap-2 mb-3 mt-1 pt-2 border-t border-pf-line');
+        row.appendChild(el('label', 'text-xs text-pf-text/80', 'Ação'));
+        const act = el('select', 'pf-select');
+        for (const [k, d] of Object.entries(A)) { const o = el('option', '', d.label); o.value = k; act.appendChild(o); }
+        act.value = t.action;
+        act.addEventListener('change', () => {
+          const keep = { on: t.on, when: t.when, at: t.at, every: t.every, from: t.from, times: t.times, beh: t.beh, lead: t.lead };
+          for (const k of Object.keys(t)) delete t[k];
+          Object.assign(t, PF.hz.newTrigger(act.value), keep, { action: act.value });
+          P.rebuild();
+          PF.app.commit();
+        });
+        row.appendChild(act);
+        body.appendChild(row);
+        for (const p of def.params) (p.type === 'select' ? selectField : numberField)(body, t, p);
+        if (def.children) numberField(body, t, PF.hz.TRG_LEAD);
+        card.appendChild(body);
+      }
+      s.appendChild(card);
+    });
+
+    const add = el('select', 'pf-select w-full mt-1');
+    const first = el('option', '', list.length >= PF.hz.MAX_TRIGGERS ? 'Limite de ' + PF.hz.MAX_TRIGGERS + ' gatilhos' : '+ Adicionar gatilho…');
+    first.value = '';
+    add.appendChild(first);
+    add.disabled = list.length >= PF.hz.MAX_TRIGGERS;
+    for (const [k, d] of Object.entries(A)) { const o = el('option', '', d.label); o.value = k; add.appendChild(o); }
+    add.addEventListener('change', () => {
+      if (!add.value) return;
+      list.push(PF.hz.newTrigger(add.value));
+      if (h.active < 2) h.active = 2;
+      P.rebuild();
+      PF.app.commit();
+    });
+    s.appendChild(add);
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed',
+      'Na batida/meia batida segue a grade da música. "Aviso antes" mostra as linhas de mira. Explodir, Dividir e Sumir tiram a forma da tela; os losangos no bloco da timeline são os disparos.'));
   }
 
   // BPM, primeira batida, compasso e encaixe na grade

@@ -125,6 +125,9 @@
     },
   };
 
+  // no editor, gatilhos reativos mostram uma prévia com o jogador parado no início da fase
+  PF.hz.preview = true;
+
   // ---------- arena ----------
   const stage = $('stage');
   const sctx = stage.getContext('2d');
@@ -472,6 +475,7 @@
     }
     app.mode = 'test';
     app.t = t0;
+    PF.hz.setReactive(new Map()); // gatilhos reativos começam sem disparar
     const sp = app.level.spawn;
     app.test = {
       t0, hits: 0, shake: 0, flash: 0, done: false, over: false, online: app.editLevel ? label : '',
@@ -494,6 +498,7 @@
     app.t = app.test.t0;
     app.mode = 'edit';
     app.test = null;
+    PF.hz.setReactive(null); // volta para a prévia do editor
     if (app.editLevel) {
       app.level = app.editLevel;
       app.editLevel = null;
@@ -515,6 +520,29 @@
     p.dash = P.dashTime;
     p.dashCd = P.dashCd;
     p.dashDir = p.dir.slice();
+  }
+
+  // Gatilhos reativos da Forma: "jogador perto" e "encostar no jogador" disparam uma vez,
+  // no instante em que acontece (mais o aviso, para dar tempo de reagir).
+  function reactiveTriggers(p) {
+    const R = PF.hz.getReactive();
+    if (!R) return;
+    PF.hz.setBeat(app.level);
+    for (const h of app.level.hazards) {
+      if (h.type !== 'shape' || !h.triggers.some(PF.hz.isReactive)) continue;
+      const bt = app.t - h.time - h.warn;
+      if (bt < 0 || bt > h.active || bt >= PF.hz.shapeEvents(h).hideAt) continue;
+      const pose = PF.hz.livePose(h, bt);
+      let parts = null;
+      h.triggers.forEach((t, i) => {
+        const key = h.id + ':' + i;
+        if (!t.on || !PF.hz.isReactive(t) || R.has(key)) return;
+        let hit;
+        if (t.when === 6) hit = Math.hypot(p.x - pose.x, p.y - pose.y) < t.dist;
+        else hit = (parts || (parts = PF.hz.parentShapesAt(h, pose))).some(s => PF.hz.hitsPlayer(s, p.x, p.y, P.r));
+        if (hit) R.set(key, Math.min(h.active, bt + t.lead));
+      });
+    }
   }
 
   function updateTest(dt) {
@@ -557,6 +585,8 @@
     p.dashCd = Math.max(0, p.dashCd - dt);
     p.hurt = Math.max(0, p.hurt - dt);
     p.spawn = Math.max(0, p.spawn - dt);
+
+    reactiveTriggers(p);
 
     if (p.dash <= 0 && p.hurt <= 0 && p.spawn <= 0) {
       for (const s of PF.hz.collect(app.level, app.t, [])) {

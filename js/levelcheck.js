@@ -78,7 +78,15 @@
   //  ok=false -> impossível; "at" = instante (s) em que ninguém sobrevive
   //  ok=true  -> possível; hitsNeeded = quantas vidas é preciso perder no melhor caminho
   //  partial  -> a conta passou de budgetMs e parou antes do fim (aí a fase é aceita)
+  // gatilhos reativos (dependem do jogador) ficam de fora: sem prévia e sem disparos do teste
   PF.levelCheck = function (level, budgetMs = 4000) {
+    const prev = PF.hz.preview, react = PF.hz.getReactive();
+    PF.hz.preview = false;
+    PF.hz.setReactive(null);
+    try { return check(level, budgetMs); } finally { PF.hz.preview = prev; PF.hz.setReactive(react); }
+  };
+
+  function check(level, budgetMs) {
     const P = PF.PLAYER;
     const started = Date.now();
     const dur = Math.max(0, Number(level.duration) || 0);
@@ -135,5 +143,5 @@
     let best = 0;
     for (let i = 0; i < N; i++) { const hp = cur[i] / S_HP | 0; if (hp > best) best = hp; }
     return { ok: true, at: dur, hitsNeeded: P.hp - best };
-  };
+  }
 })();

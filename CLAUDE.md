@@ -119,7 +119,18 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   (`PF.hz.setBeat(level)`, chamado em `collect`; sem BPM 0,5 s); pulsar segue o tempo da fase.
   Dados além de `props` passam por `def.extra(raw, h)` no `PF.hz.normalize`. Painel: cartões com
   mini-gráfico, liga/desliga, subir/descer. Mapa: caminho tracejado do pivô durante o tempo ativo.
-  Próximas etapas: telegrafia, grupos/repetidor, gatilhos.
+  Gatilhos (`h.triggers`, até 8, `PF.TRIGGER_ACTIONS`): quando = ao aparecer, num tempo, na batida
+  (`every` bt, na grade da música), na meia batida, fim de comportamento (keyframe = `end` ou
+  `start+time` do comportamento nº `beh`), no fim, jogador perto (`dist`), encostar no jogador;
+  ações = rajada, explodir, dividir, convergir, espelhar, acelerar (relógio dos comportamentos
+  ×`mult` em `ramp` s), transformar (vira outra forma/tamanho), sumir. `lead` = aviso antes (linhas
+  de mira/anel). `PF.hz.shapeEvents(h)` calcula tudo antes (lista de eventos com pose fixa, cache por
+  JSON da forma), então continua função pura do tempo. Explodir/dividir/sumir tiram a forma; o bloco
+  cresce até o fim dos filhos (máx. 1500). Reativos (perto/encostar): no teste disparam de verdade
+  (`PF.hz.setReactive(Map)` + `reactiveTriggers` no main.js, uma vez, no instante + `lead`); no
+  editor (`PF.hz.preview = true`) a prévia imagina o jogador parado no início; `levelCheck` e servidor
+  os ignoram. Losangos marcam os disparos no bloco da timeline e no mapa.
+  Próximas etapas: telegrafia do caminho, grupos/repetidor.
   Com BPM, perigos novos nascem na batida (encaixe) e os blocos mostram "c3 b2" (compasso/batida);
   a preferência do encaixe fica em `localStorage['pulsefield.snap']`.
 
