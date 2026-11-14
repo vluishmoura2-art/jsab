@@ -172,7 +172,9 @@
     const p = toWorld(e);
     stage.setPointerCapture(e.pointerId);
     if (app.tool !== 'select') {
-      const h = PF.hz.create(app.tool, Math.round(p.x), Math.round(p.y), u.round(app.t, 2));
+      // com BPM e encaixe ligado, nasce na batida mais perto da agulha
+      const t0 = app.level.bpm > 0 && app.snapOn ? app.snapTime(app.t) : u.round(app.t, 2);
+      const h = PF.hz.create(app.tool, Math.round(p.x), Math.round(p.y), u.clamp(t0, 0, app.level.duration));
       app.level.hazards.push(h);
       app.select(h.id);
       drag = { id: h.id, dx: 0, dy: 0, moved: true };
@@ -182,6 +184,11 @@
     const cur = app.selected();
     if (cur && cur.type === 'shape') {
       const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+      for (const c of hd.path) {
+        for (const q of c.pts) {
+          if (near([q.x, q.y])) { drag = { id: cur.id, kind: 'path', bi: c.bi, kx: q.kx, ky: q.ky, ox: c.ox, oy: c.oy, moved: false }; return; }
+        }
+      }
       if (near(hd.rot)) {
         // ângulo do pivô até a alça, sem a rotação: a alça fica embaixo do mouse ao girar
         const [lx, ly] = [0 - cur.pivotX, -cur.h / 2 - 30 / view.scale - cur.pivotY];
@@ -220,6 +227,7 @@
         const cur = app.selected();
         if (cur && cur.type === 'shape') {
           const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+          if (hd.path.some(c => c.pts.some(q => near([q.x, q.y])))) { stage.style.cursor = 'move'; return; }
           if (near(hd.rot)) { stage.style.cursor = 'grab'; return; }
           if (near(hd.size)) { stage.style.cursor = 'nwse-resize'; return; }
           if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) { stage.style.cursor = 'crosshair'; return; }
@@ -251,7 +259,14 @@
   // arrastar uma alça da Forma
   function shapeDrag(h, p, e) {
     const set = (k, v) => { if (h[k] !== v) { h[k] = v; drag.moved = true; } };
-    if (drag.kind === 'rot') {
+    if (drag.kind === 'path') {
+      const b = h.behaviors[drag.bi];
+      if (!b) return;
+      let nx = p.x - drag.ox, ny = p.y - drag.oy;
+      if (e.shiftKey) { nx = Math.round(nx / 40) * 40; ny = Math.round(ny / 40) * 40; }
+      nx = u.clamp(Math.round(nx), -3000, 3000); ny = u.clamp(Math.round(ny), -3000, 3000);
+      if (b[drag.kx] !== nx || b[drag.ky] !== ny) { b[drag.kx] = nx; b[drag.ky] = ny; drag.moved = true; }
+    } else if (drag.kind === 'rot') {
       let a = Math.atan2(p.y - h.y, p.x - h.x) * 180 / Math.PI - drag.base;
       if (e.shiftKey) a = Math.round(a / 15) * 15;
       a = ((Math.round(a) + 540) % 360) - 180; // -180..180
@@ -683,20 +698,30 @@
 
   // ---------- ritmo: snap e tap tempo ----------
   const SNAP_DIVS = [1, 2, 4, 8, 3];
+  // preferência do encaixe fica no navegador (não é da fase)
+  const SNAP_KEY = 'pulsefield.snap';
+  try {
+    const sv = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
+    if (sv && SNAP_DIVS.includes(sv.div)) { app.snapDiv = sv.div; app.snapOn = !!sv.on; }
+  } catch (e) { /* armazenamento indisponível */ }
+  const saveSnap = () => { try { localStorage.setItem(SNAP_KEY, JSON.stringify({ on: app.snapOn, div: app.snapDiv })); } catch (e) { /* ignora */ } };
   const divName = d => d === 1 ? '1 batida' : '1/' + d + ' de batida';
   function toggleSnap() {
     app.snapOn = !app.snapOn;
+    saveSnap();
     if (PF.toast) PF.toast(app.snapOn ? 'Encaixe ligado · ' + divName(app.snapDiv) : 'Encaixe desligado · tempo livre', 'info', 'snap');
     PF.panel.refresh();
   }
   function cycleSnapDiv() {
     app.snapDiv = SNAP_DIVS[(SNAP_DIVS.indexOf(app.snapDiv) + 1) % SNAP_DIVS.length];
     app.snapOn = true;
+    saveSnap();
     if (PF.toast) PF.toast('Encaixe em ' + divName(app.snapDiv), 'info', 'snap');
     PF.panel.refresh();
   }
   PF.app.toggleSnap = toggleSnap;
-  PF.app.setSnapDiv = d => { app.snapDiv = d; app.snapOn = true; PF.panel.refresh(); };
+  PF.app.setSnapDiv = d => { app.snapDiv = d; app.snapOn = true; saveSnap(); PF.panel.refresh(); };
+  PF.app.setSnapOff = () => { app.snapOn = false; saveSnap(); PF.panel.refresh(); };
 
   // Bater B no ritmo: média dos últimos intervalos. Tocando, a última batida vira a referência (offset).
   let taps = [], tapCommit = 0;

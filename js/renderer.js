@@ -280,15 +280,52 @@
   }
 
   // Alças da Forma no mundo: giro (bolinha acima), tamanho (canto) e pivô (losango em x,y).
+  // path: pontos da curva de cada comportamento "Caminho" (relativos a onde ele começa)
   PF.shapeHandles = function (h, scale) {
     const m = PF.hz.shapeMatrix(h);
+    const path = [];
+    (h.behaviors || []).forEach((b, bi) => {
+      if (b.type !== 'path' || !b.on) return;
+      const o = PF.hz.shapePose(h, b.start);
+      path.push({ bi, ox: o.x, oy: o.y, pts: [['c1x', 'c1y'], ['c2x', 'c2y'], ['ex', 'ey']].map(([kx, ky]) => ({ kx, ky, x: o.x + b[kx], y: o.y + b[ky] })) });
+    });
     return {
       rot: PF.m.apply(m, 0, -h.h / 2 - 30 / scale),
       top: PF.m.apply(m, 0, -h.h / 2),
       size: PF.m.apply(m, h.w / 2, h.h / 2),
       pivot: [h.x, h.y],
+      path,
     };
   };
+
+  // rastro do pivô durante o tempo ativo (só se algum comportamento mexe na posição)
+  function motionTrail(ctx, h, scale) {
+    if (!h.behaviors || !h.behaviors.length) return;
+    const n = Math.min(240, Math.max(24, Math.ceil(h.active * 30)));
+    const pts = [];
+    let moved = false;
+    for (let i = 0; i <= n; i++) {
+      const p = PF.hz.shapePose(h, h.active * i / n);
+      pts.push(p.x, p.y);
+      if (Math.abs(p.x - h.x) > 0.5 || Math.abs(p.y - h.y) > 0.5) moved = true;
+    }
+    if (!moved) return;
+    ctx.save();
+    ctx.setLineDash([2 / scale, 5 / scale]);
+    ctx.globalAlpha *= 0.7;
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.stroke();
+    // ponto final
+    ctx.setLineDash([]);
+    const ex = pts[pts.length - 2], ey = pts[pts.length - 1], r = 4 / scale;
+    ctx.beginPath();
+    ctx.moveTo(ex - r, ey - r); ctx.lineTo(ex + r, ey + r);
+    ctx.moveTo(ex + r, ey - r); ctx.lineTo(ex - r, ey + r);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   function shapeGizmo(ctx, h, sel, scale) {
     const m = PF.hz.shapeMatrix(h);
@@ -304,7 +341,25 @@
     ctx.stroke();
     ctx.setLineDash([]);
     const hd = PF.shapeHandles(h, scale), r = (sel ? 6 : 4.5) / scale;
+    if (sel || h.behaviors.length) motionTrail(ctx, h, scale);
     if (sel) {
+      // pontos de controle das curvas: hastes até os controles, bolinhas arrastáveis
+      for (const c of hd.path) {
+        const [c1, c2, e] = c.pts;
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath();
+        ctx.moveTo(c.ox, c.oy); ctx.lineTo(c1.x, c1.y);
+        ctx.moveTo(e.x, e.y); ctx.lineTo(c2.x, c2.y);
+        ctx.stroke();
+        ctx.restore();
+        for (const q of c.pts) {
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 4.5 / scale, 0, TAU);
+          ctx.fillStyle = q === e ? C.accent : C.bg;
+          ctx.fill(); ctx.stroke();
+        }
+      }
       // centro da forma → pivô (mostra em volta de onde ela gira)
       const [cx, cy] = PF.m.apply(m, 0, 0);
       if (Math.hypot(cx - h.x, cy - h.y) > 2) {

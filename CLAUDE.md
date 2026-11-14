@@ -110,8 +110,18 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   2 triângulo, 3 laser; `w`/`h` (laser: comprimento/grossura), `rot`, pivô `pivotX/pivotY` (do centro,
   antes de girar; `x,y` é onde o pivô fica), cheia/vazada (vazada = uma `line` por lado), aviso → ativa → some.
   No mapa: bolinha de cima gira (Shift 15°), quadradinho do canto muda o tamanho (Shift proporcional),
-  Alt+arrastar move o pivô sem mexer na forma (`PF.shapeHandles` no renderer). Próximas etapas do
-  modo manual: pilha de comportamentos, telegrafia, grupos/repetidor, gatilhos.
+  Alt+arrastar move o pivô sem mexer na forma (`PF.shapeHandles` no renderer).
+  Comportamentos (`h.behaviors`, até 12, `PF.BEHAVIORS` em hazards.js): mover, investida, onda,
+  zigue-zague, órbita, espiral, caminho (Bézier; pontos arrastáveis no mapa), quicar nas bordas,
+  teletransporte, tremer, girar, pulsar na batida, crescer/encolher. Cada um: `on`, `start`/`end`
+  (s depois de ativa) e params; funções puras que somam num delta `{x, y, rot, s}`, de cima para
+  baixo (`PF.hz.shapePose(h, bt)`). No aviso a forma fica na pose inicial; "bt" = batidas
+  (`PF.hz.setBeat(level)`, chamado em `collect`; sem BPM 0,5 s); pulsar segue o tempo da fase.
+  Dados além de `props` passam por `def.extra(raw, h)` no `PF.hz.normalize`. Painel: cartões com
+  mini-gráfico, liga/desliga, subir/descer. Mapa: caminho tracejado do pivô durante o tempo ativo.
+  Próximas etapas: telegrafia, grupos/repetidor, gatilhos.
+  Com BPM, perigos novos nascem na batida (encaixe) e os blocos mostram "c3 b2" (compasso/batida);
+  a preferência do encaixe fica em `localStorage['pulsefield.snap']`.
 
   Interface: cantos chanfrados (`.pf-btn`, `.pf-chamfer`), tokens de cor em `:root` no `style.css`,
   ícones SVG (sem emojis), barra lateral agrupada por comportamento (Projétil, Zona, Corpo, Clima).

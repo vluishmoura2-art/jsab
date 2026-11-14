@@ -623,10 +623,235 @@
     hit: (h, x, y, tol) => Math.hypot(x - h.x, y - h.y) <= Math.max(h.size * 0.75, tol),
   };
 
-  // Forma (modo manual): círculo, quadrado, triângulo ou laser com rotação e ponto de pivô.
-  // (x, y) é onde fica o pivô; pivotX/pivotY é o pivô em relação ao centro da forma, antes de girar.
+  // ---------- comportamentos (modo manual) ----------
+  // Cada comportamento é função pura do tempo "t" (s desde que ele começou) e acumula num delta
+  // d = { x, y, rot, s }. A pilha é aplicada de cima para baixo. "bt" nos parâmetros = batidas
+  // da fase (sem BPM, 1 batida = 0,5 s). collect() atualiza BEAT/OFFSET com a fase atual.
+  let BEAT = 0.5, OFFSET = 0;
+  const D2R = Math.PI / 180;
+  const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+  const easeOut3 = p => 1 - (1 - p) * (1 - p) * (1 - p);
+  const easeInOut = p => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+  // ida e volta entre lo e hi (quicar sem simular)
+  const fold = (v, lo, hi) => {
+    const w = hi - lo;
+    if (w <= 0) return (lo + hi) / 2;
+    const m = (((v - lo) % (2 * w)) + 2 * w) % (2 * w);
+    return lo + (m <= w ? m : 2 * w - m);
+  };
+  const tri = x => 2 * Math.abs(2 * (x - Math.floor(x + 0.5))) - 1; // onda triangular -1..1
+  const DIR = { key: 'dir', label: 'Direção (0 = →, 90 = ↓)', min: -180, max: 180, step: 1, unit: '°' };
+  const BEH_TIME = [
+    { key: 'start', label: 'Começa (depois de ativa)', min: 0, max: 600, step: 0.05, unit: 's' },
+    { key: 'end', label: 'Para em (0 = não para)', min: 0, max: 600, step: 0.05, unit: 's' },
+  ];
+
+  PF.BEHAVIORS = {
+    move: {
+      label: 'Mover', group: 'Posição',
+      defaults: { dir: 0, speed: 240, accel: 0 },
+      params: [DIR,
+        { key: 'speed', label: 'Velocidade', min: -3000, max: 3000, step: 10, unit: 'px/s' },
+        { key: 'accel', label: 'Aceleração', min: -5000, max: 5000, step: 10, unit: 'px/s²' }],
+      apply(b, t, d) {
+        const a = b.dir * D2R, s = b.speed * t + 0.5 * b.accel * t * t;
+        d.x += Math.cos(a) * s; d.y += Math.sin(a) * s;
+      },
+    },
+    dash: {
+      label: 'Investida', group: 'Posição',
+      defaults: { dir: 0, dist: 400, time: 0.25 },
+      params: [DIR,
+        { key: 'dist', label: 'Distância', min: -3000, max: 3000, step: 5, unit: 'px' },
+        { key: 'time', label: 'Duração', min: 0.02, max: 10, step: 0.01, unit: 's' }],
+      apply(b, t, d) {
+        const a = b.dir * D2R, s = b.dist * easeOut3(clamp01(t / b.time));
+        d.x += Math.cos(a) * s; d.y += Math.sin(a) * s;
+      },
+    },
+    wave: {
+      label: 'Onda', group: 'Posição',
+      defaults: { axis: 1, amp: 60, period: 2 },
+      params: [{ key: 'axis', label: 'Eixo', type: 'select', options: [[0, 'Horizontal'], [1, 'Vertical']] },
+        { key: 'amp', label: 'Amplitude', min: 0, max: 1500, step: 1, unit: 'px' },
+        { key: 'period', label: 'Período', min: 0.25, max: 64, step: 0.25, unit: 'bt' }],
+      apply(b, t, d) {
+        const v = b.amp * Math.sin(TAU * t / (b.period * BEAT));
+        if (b.axis) d.y += v; else d.x += v;
+      },
+    },
+    zigzag: {
+      label: 'Zigue-zague', group: 'Posição',
+      defaults: { dir: 0, speed: 200, amp: 60, period: 1 },
+      params: [DIR,
+        { key: 'speed', label: 'Velocidade', min: -3000, max: 3000, step: 10, unit: 'px/s' },
+        { key: 'amp', label: 'Amplitude', min: 0, max: 1500, step: 1, unit: 'px' },
+        { key: 'period', label: 'Período', min: 0.25, max: 64, step: 0.25, unit: 'bt' }],
+      apply(b, t, d) {
+        const a = b.dir * D2R, f = b.speed * t, s = b.amp * tri(t / (b.period * BEAT) + 0.25);
+        d.x += Math.cos(a) * f - Math.sin(a) * s;
+        d.y += Math.sin(a) * f + Math.cos(a) * s;
+      },
+    },
+    orbit: {
+      label: 'Órbita', group: 'Posição',
+      defaults: { radius: 100, speed: 120, angle: 180 },
+      params: [{ key: 'radius', label: 'Raio', min: 0, max: 2000, step: 1, unit: 'px' },
+        { key: 'speed', label: 'Velocidade', min: -1440, max: 1440, step: 5, unit: '°/s' },
+        { key: 'angle', label: 'Onde está o centro (0 = →)', min: -180, max: 180, step: 1, unit: '°' }],
+      apply(b, t, d) {
+        // o centro fica a "raio" px na direção "angle": começa parado no lugar e gira em volta dele
+        const a0 = (b.angle + 180) * D2R, a = a0 + b.speed * t * D2R;
+        d.x += b.radius * (Math.cos(a) - Math.cos(a0));
+        d.y += b.radius * (Math.sin(a) - Math.sin(a0));
+      },
+    },
+    spiral: {
+      label: 'Espiral', group: 'Posição',
+      defaults: { speed: 240, grow: 80, angle: 0 },
+      params: [{ key: 'speed', label: 'Giro', min: -1440, max: 1440, step: 5, unit: '°/s' },
+        { key: 'grow', label: 'Abre', min: -2000, max: 2000, step: 5, unit: 'px/s' },
+        { key: 'angle', label: 'Ângulo inicial', min: -180, max: 180, step: 1, unit: '°' }],
+      apply(b, t, d) {
+        const a = (b.angle + b.speed * t) * D2R, r = b.grow * t;
+        d.x += r * Math.cos(a); d.y += r * Math.sin(a);
+      },
+    },
+    path: {
+      label: 'Caminho (curva)', group: 'Posição',
+      defaults: { c1x: 160, c1y: -200, c2x: 320, c2y: 200, ex: 480, ey: 0, time: 2, ease: 0, face: 0 },
+      params: [
+        { key: 'c1x', label: 'Controle 1 X', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'c1y', label: 'Controle 1 Y', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'c2x', label: 'Controle 2 X', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'c2y', label: 'Controle 2 Y', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'ex', label: 'Fim X', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'ey', label: 'Fim Y', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'time', label: 'Duração', min: 0.05, max: 120, step: 0.05, unit: 's' },
+        { key: 'ease', label: 'Ritmo', type: 'select', options: [[0, 'Constante'], [1, 'Suave'], [2, 'Freia no fim']] },
+        { key: 'face', label: 'Virar para o caminho', type: 'select', options: [[0, 'Não'], [1, 'Sim']] }],
+      apply(b, t, d) {
+        let p = clamp01(t / b.time);
+        if (b.ease === 1) p = easeInOut(p); else if (b.ease === 2) p = easeOut3(p);
+        const q = 1 - p, k0 = 3 * q * q * p, k1 = 3 * q * p * p, k2 = p * p * p;
+        d.x += k0 * b.c1x + k1 * b.c2x + k2 * b.ex;
+        d.y += k0 * b.c1y + k1 * b.c2y + k2 * b.ey;
+        if (b.face) { // derivada da Bézier (início em 0,0)
+          const tx = 3 * q * q * b.c1x + 6 * q * p * (b.c2x - b.c1x) + 3 * p * p * (b.ex - b.c2x);
+          const ty = 3 * q * q * b.c1y + 6 * q * p * (b.c2y - b.c1y) + 3 * p * p * (b.ey - b.c2y);
+          if (tx || ty) d.rot += Math.atan2(ty, tx) / D2R;
+        }
+      },
+    },
+    bounce: {
+      label: 'Quicar nas bordas', group: 'Posição',
+      defaults: { dir: 35, speed: 320, pad: 40 },
+      params: [DIR,
+        { key: 'speed', label: 'Velocidade', min: 0, max: 3000, step: 10, unit: 'px/s' },
+        { key: 'pad', label: 'Distância da borda', min: 0, max: 360, step: 1, unit: 'px' }],
+      apply(b, t, d, h) {
+        const a = b.dir * D2R;
+        const x = h.x + d.x + Math.cos(a) * b.speed * t, y = h.y + d.y + Math.sin(a) * b.speed * t;
+        d.x = fold(x, b.pad, W - b.pad) - h.x;
+        d.y = fold(y, b.pad, H - b.pad) - h.y;
+      },
+    },
+    teleport: {
+      label: 'Teletransporte', group: 'Posição',
+      defaults: { dx: 320, dy: 0, every: 2 },
+      params: [{ key: 'dx', label: 'Salto X', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'dy', label: 'Salto Y', min: -3000, max: 3000, step: 1, unit: 'px' },
+        { key: 'every', label: 'A cada', min: 0.25, max: 64, step: 0.25, unit: 'bt' }],
+      apply(b, t, d) {
+        if (Math.floor(t / (b.every * BEAT)) % 2) { d.x += b.dx; d.y += b.dy; }
+      },
+    },
+    shake: {
+      label: 'Tremer', group: 'Posição',
+      defaults: { amp: 6, freq: 18 },
+      params: [{ key: 'amp', label: 'Força', min: 0, max: 200, step: 0.5, unit: 'px' },
+        { key: 'freq', label: 'Rapidez', min: 1, max: 60, step: 1, unit: 'Hz' }],
+      apply(b, t, d) {
+        d.x += b.amp * Math.sin(TAU * b.freq * t);
+        d.y += b.amp * Math.sin(TAU * b.freq * 1.37 * t + 1.3);
+      },
+    },
+    spin: {
+      label: 'Girar', group: 'Rotação',
+      defaults: { speed: 90 },
+      params: [{ key: 'speed', label: 'Velocidade', min: -2880, max: 2880, step: 5, unit: '°/s' }],
+      apply(b, t, d) { d.rot += b.speed * t; },
+    },
+    pulse: {
+      label: 'Pulsar na batida', group: 'Escala',
+      defaults: { period: 1, amount: 20, shape: 0 },
+      params: [{ key: 'period', label: 'A cada', min: 0.25, max: 16, step: 0.25, unit: 'bt' },
+        { key: 'amount', label: 'Quanto cresce', min: -90, max: 300, step: 1, unit: '%' },
+        { key: 'shape', label: 'Jeito', type: 'select', options: [[0, 'Batida'], [1, 'Suave']] }],
+      // segue a batida da música (tempo da fase), não o início do comportamento
+      apply(b, t, d, h, T) {
+        const ph = ((((T - OFFSET) / (b.period * BEAT)) % 1) + 1) % 1;
+        const k = b.shape ? 0.5 - 0.5 * Math.cos(ph * TAU) : Math.exp(-ph * 8);
+        d.s *= Math.max(0.01, 1 + b.amount / 100 * k);
+      },
+    },
+    scale: {
+      label: 'Crescer / encolher', group: 'Escala',
+      defaults: { from: 100, to: 200, time: 1 },
+      params: [{ key: 'from', label: 'De', min: 0, max: 1000, step: 1, unit: '%' },
+        { key: 'to', label: 'Para', min: 0, max: 1000, step: 1, unit: '%' },
+        { key: 'time', label: 'Duração', min: 0.02, max: 120, step: 0.02, unit: 's' }],
+      apply(b, t, d) {
+        d.s *= Math.max(0.001, (b.from + (b.to - b.from) * easeInOut(clamp01(t / b.time))) / 100);
+      },
+    },
+  };
+
+  // novo comportamento com os valores padrão
+  function newBehavior(type) {
+    const def = PF.BEHAVIORS[type];
+    return { type, on: 1, start: 0, end: 0, ...JSON.parse(JSON.stringify(def.defaults)) };
+  }
+  // limpa os comportamentos vindos de um JSON (máx. 12; números presos aos limites)
+  const MAX_BEHAVIORS = 12;
+  function normBehaviors(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const r of raw) {
+      if (out.length >= MAX_BEHAVIORS) break;
+      const def = r && PF.BEHAVIORS[r.type];
+      if (!def) continue;
+      const b = { type: r.type, on: r.on === 0 || r.on === false ? 0 : 1 };
+      for (const p of BEH_TIME) b[p.key] = normProp(r, p, 0);
+      for (const p of def.params) b[p.key] = normProp(r, p, def.defaults[p.key]);
+      out.push(b);
+    }
+    return out;
+  }
+
+  // ---------- Forma (modo manual) ----------
+  // Círculo, quadrado, triângulo ou laser com rotação e ponto de pivô. (x, y) é onde fica o pivô;
+  // pivotX/pivotY é o pivô em relação ao centro da forma, antes de girar. Os comportamentos
+  // contam o tempo a partir de quando a forma fica ativa; no aviso ela fica na pose inicial.
   const SHP_CIRCLE = 0, SHP_SQUARE = 1, SHP_TRI = 2, SHP_LASER = 3;
-  const shapeMatrix = (h, k = 1) => PF.m.compose(h.x, h.y, h.rot, k, k, h.pivotX, h.pivotY);
+  // pose (posição do pivô, rotação e escala) no tempo bt desde que ficou ativa; T = tempo da fase
+  function shapePose(h, bt, T) {
+    const d = { x: 0, y: 0, rot: 0, s: 1 };
+    const list = h.behaviors;
+    if (list) {
+      for (const b of list) {
+        if (!b.on || bt < b.start) continue;
+        const def = PF.BEHAVIORS[b.type];
+        if (!def) continue;
+        const t = (b.end > b.start ? Math.min(bt, b.end) : bt) - b.start;
+        def.apply(b, t, d, h, T == null ? h.time + h.warn + bt : T);
+      }
+    }
+    return { x: h.x + d.x, y: h.y + d.y, rot: h.rot + d.rot, s: d.s };
+  }
+  const REST = h => ({ x: h.x, y: h.y, rot: h.rot, s: 1 });
+  const shapeMatrix = (h, k = 1, pose = REST(h)) =>
+    PF.m.compose(pose.x, pose.y, pose.rot, k * pose.s, k * pose.s, h.pivotX, h.pivotY);
   // contorno da forma em coords locais (centro em 0,0), como lista x,y,x,y…
   function shapeLocal(h) {
     const w2 = h.w / 2, h2 = h.h / 2;
@@ -637,16 +862,17 @@
     return pts;
   }
   // formas prontas para desenhar/colidir, com escala extra k (o "pop" ao aparecer)
-  function shapeOut(h, k, base, out) {
-    const m = shapeMatrix(h, k);
+  function shapeOut(h, k, base, out, pose) {
+    const m = shapeMatrix(h, k, pose);
+    const sk = k * (pose ? pose.s : 1);
     if (h.kind === SHP_LASER) {
       const [x1, y1] = PF.m.apply(m, -h.w / 2, 0), [x2, y2] = PF.m.apply(m, h.w / 2, 0);
-      out.push({ ...base, kind: 'line', x1, y1, x2, y2, w: h.h * k });
+      out.push({ ...base, kind: 'line', x1, y1, x2, y2, w: h.h * sk });
       return;
     }
     if (h.kind === SHP_CIRCLE && h.w === h.h) { // círculo de verdade: mais barato que o polígono
-      const [x, y] = PF.m.apply(m, 0, 0), r = h.w / 2 * k;
-      if (h.hollow) out.push({ ...base, kind: 'ring', x, y, r, w: Math.min(h.stroke, h.w) * k });
+      const [x, y] = PF.m.apply(m, 0, 0), r = h.w / 2 * sk;
+      if (h.hollow) out.push({ ...base, kind: 'ring', x, y, r, w: Math.min(h.stroke, h.w) * sk });
       else out.push({ ...base, kind: 'circle', x, y, r });
       return;
     }
@@ -656,14 +882,14 @@
     const n = pts.length / 2; // vazada: uma linha por lado, centrada no contorno
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
-      out.push({ ...base, kind: 'line', x1: pts[i * 2], y1: pts[i * 2 + 1], x2: pts[j * 2], y2: pts[j * 2 + 1], w: h.stroke * k });
+      out.push({ ...base, kind: 'line', x1: pts[i * 2], y1: pts[i * 2 + 1], x2: pts[j * 2], y2: pts[j * 2 + 1], w: h.stroke * sk });
     }
   }
 
   PF.HAZARDS.shape = {
     label: 'Forma',
-    desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma.',
-    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1 },
+    desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma. Em "Comportamentos" você empilha movimentos (mover, onda, órbita, caminho, pulsar…): eles começam quando a forma fica ativa e são aplicados de cima para baixo.',
+    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1, behaviors: [] },
     props: [
       { key: 'kind', label: 'Forma', type: 'select', options: [[SHP_CIRCLE, 'Círculo'], [SHP_SQUARE, 'Quadrado'], [SHP_TRI, 'Triângulo'], [SHP_LASER, 'Laser']] },
       { key: 'w', label: 'Largura (laser: comprimento)', min: 4, max: 3000, step: 1, unit: 'px' },
@@ -674,18 +900,30 @@
       { key: 'hollow', label: 'Preenchimento', type: 'select', options: [[0, 'Cheia'], [1, 'Vazada']] },
       { key: 'stroke', label: 'Grossura do contorno (vazada)', min: 2, max: 200, step: 1, unit: 'px' },
       WARN_PROP,
-      ACTIVE_PROP,
+      { key: 'active', label: 'Tempo ativa', min: 0.05, max: 120, step: 0.05, unit: 's' },
     ],
+    extra(raw, h) { h.behaviors = normBehaviors(raw.behaviors); },
     lead: () => 0,
     warnLen: h => h.warn,
     length: h => h.warn + h.active + FADE,
     shapes(h, lt, out) {
-      appearCycle(h, lt, out, ({ state, alpha, scale }) => { shapeOut(h, scale, { state, alpha }, out); });
+      if (lt < 0) return;
+      const bt = Math.max(0, Math.min(lt - h.warn, h.active)); // no sumiço fica onde parou
+      const pose = shapePose(h, bt, h.time + h.warn + bt);
+      appearCycle(h, lt, out, ({ state, alpha, scale }) => { shapeOut(h, scale, { state, alpha }, out, pose); });
     },
     hit(h, x, y, tol) {
-      const tmp = [];
-      shapeOut(h, 1, { state: 'active', alpha: 1 }, tmp);
-      return tmp.some(s => PF.hz.hitsPlayer(s, x, y, tol)) || Math.hypot(x - h.x, y - h.y) <= tol * 1.5;
+      const test = pose => {
+        const tmp = [];
+        shapeOut(h, 1, { state: 'active', alpha: 1 }, tmp, pose);
+        return tmp.some(s => PF.hz.hitsPlayer(s, x, y, tol));
+      };
+      if (test(REST(h)) || Math.hypot(x - h.x, y - h.y) <= tol * 1.5) return true;
+      // também onde ela está agora (no editor), se estiver na tela
+      const T = PF.app ? PF.app.t : null, lt = T == null ? -1 : T - h.time;
+      if (lt < 0 || lt > h.warn + h.active) return false;
+      const bt = Math.max(0, lt - h.warn);
+      return test(shapePose(h, bt, h.time + h.warn + bt));
     },
   };
 
@@ -710,6 +948,13 @@
   function snakeLife(h) { return h.tail * snakeGap(h) / h.speed; }
   function snakeRun(h) { return Math.max(0, (h.dir > 0 ? W - h.x : h.x) + h.width); }
 
+  // um valor numérico/select vindo de JSON, preso aos limites do prop (ou o padrão)
+  function normProp(raw, p, dflt) {
+    const v = Number(raw[p.key]);
+    if (p.type === 'select') return p.options.some(o => o[0] === v) ? v : dflt;
+    return Number.isFinite(v) ? u.clamp(v, p.min, p.max) : dflt;
+  }
+
   let seq = 1;
 
   PF.hz = {
@@ -718,6 +963,15 @@
     spikePts,
     shapeMatrix,
     shapeLocal,
+    shapePose,
+    newBehavior,
+    MAX_BEHAVIORS,
+    BEH_TIME,
+    // batida da fase usada pelos comportamentos (sem BPM: 0,5 s)
+    setBeat(level) {
+      BEAT = level && level.bpm > 0 ? 60 / level.bpm : 0.5;
+      OFFSET = level && level.bpm > 0 ? level.offset || 0 : 0;
+    },
     curvePos,
     curveRun,
     create(type, x, y, time) {
@@ -731,6 +985,7 @@
       return [h.time - d.lead(h), h.time + d.length(h)];
     },
     collect(level, t, out = []) {
+      PF.hz.setBeat(level);
       for (const h of level.hazards) {
         const d = PF.HAZARDS[h.type];
         const lt = t - h.time;
@@ -774,11 +1029,8 @@
         x: u.clamp(num(raw.x, W / 2), -400, W + 400),
         y: u.clamp(num(raw.y, H / 2), -400, H + 400),
       };
-      for (const p of def.props) {
-        const v = Number(raw[p.key]);
-        if (p.type === 'select') h[p.key] = p.options.some(o => o[0] === v) ? v : def.defaults[p.key];
-        else h[p.key] = Number.isFinite(v) ? u.clamp(v, p.min, p.max) : def.defaults[p.key];
-      }
+      for (const p of def.props) h[p.key] = normProp(raw, p, def.defaults[p.key]);
+      if (def.extra) def.extra(raw, h); // dados além dos props (ex.: comportamentos da Forma)
       return h;
     },
     // Garante ids únicos e ajusta o contador.

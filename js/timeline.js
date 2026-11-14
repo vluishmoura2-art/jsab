@@ -70,6 +70,18 @@
     }
   }
 
+  // com BPM: "c3 b2" (compasso 3, batida 2; frações como b2.5); sem BPM: segundos
+  function timeLabel(t, app) {
+    const beat = app.beatLen();
+    if (!beat) return t.toFixed(2) + 's';
+    const bpb = app.level.beatsPerBar, bi = (t - app.level.offset) / beat;
+    if (bi < -1e-6) return t.toFixed(2) + 's';
+    const r = Math.round(bi * 8) / 8; // até 1/8 de batida
+    const bar = Math.floor(r / bpb + 1e-9), inBar = r - bar * bpb + 1;
+    const exact = Math.abs(bi - r) < 1e-3;
+    return 'c' + (bar + 1) + ' b' + (+inBar.toFixed(3)) + (exact ? '' : '~');
+  }
+
   function blockRange(h) {
     const [a, b] = PF.hz.window(h);
     const xa = tx(a), xb = Math.max(tx(b), xa + 8);
@@ -159,7 +171,7 @@
         ctx.clip();
         ctx.fillStyle = sel ? C.accent : C.text;
         ctx.font = FONT_MONO;
-        ctx.fillText('#' + hz.id + ' ' + hz.time.toFixed(2) + 's', Math.max(xs, GUT) + 5, y + bh / 2 + 1);
+        ctx.fillText('#' + hz.id + ' ' + timeLabel(hz.time, app), Math.max(xs, GUT) + 5, y + bh / 2 + 1);
         ctx.restore();
       }
     }

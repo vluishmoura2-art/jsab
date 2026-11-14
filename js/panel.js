@@ -117,8 +117,134 @@
     const s2 = section('Propriedades');
     for (const p of def.props) (p.type === 'select' ? selectField : rangeField)(s2, h, p);
 
+    if (h.type === 'shape') buildBehaviors(h);
+
     const s3 = section();
     s3.appendChild(el('p', 'text-xs leading-relaxed text-pf-muted', def.desc));
+  }
+
+  // ---------- pilha de comportamentos da Forma ----------
+  const collapsed = new WeakSet(); // cartões fechados (só no editor, não vai para a fase)
+  const ICO = {
+    up: '<path d="M4 10l4-4 4 4"/>',
+    down: '<path d="M4 6l4 4 4-4"/>',
+    del: '<path d="M4 4l8 8M12 4l-8 8"/>',
+    open: '<path d="M6 4l4 4-4 4"/>',
+  };
+  function iconBtn(name, title, run) {
+    const b = el('button', 'pf-btn pf-btn-icon');
+    b.title = title;
+    b.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6">${ICO[name]}</svg>`;
+    b.addEventListener('click', e => { e.stopPropagation(); run(); });
+    return b;
+  }
+
+  // mini-gráfico do efeito deste comportamento sozinho, durante o tempo ativo
+  function drawSpark(cv, h, b) {
+    const def = PF.BEHAVIORS[b.type], g = cv.getContext('2d');
+    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth || 220, hh = 30;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, hh);
+    PF.hz.setBeat(PF.app.level);
+    const solo = { ...h, behaviors: [{ ...b, on: 1 }] }, n = 80;
+    const series = def.group === 'Posição' ? [[], []] : [[]];
+    for (let i = 0; i <= n; i++) {
+      const p = PF.hz.shapePose(solo, h.active * i / n);
+      if (def.group === 'Posição') { series[0].push(p.x - h.x); series[1].push(p.y - h.y); }
+      else if (def.group === 'Rotação') series[0].push(p.rot - h.rot);
+      else series[0].push(p.s);
+    }
+    let lo = Infinity, hi = -Infinity;
+    for (const s of series) for (const v of s) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+    g.strokeStyle = 'rgba(124,255,178,0.12)';
+    g.beginPath(); g.moveTo(0, hh - 0.5); g.lineTo(w, hh - 0.5); g.stroke();
+    const colors = ['#7CFFB2', '#4DD8FF'];
+    series.forEach((s, k) => {
+      g.strokeStyle = colors[k];
+      g.lineWidth = 1.4;
+      g.beginPath();
+      s.forEach((v, i) => {
+        const x = i / n * (w - 2) + 1, y = hh - 3 - (v - lo) / (hi - lo) * (hh - 6);
+        i ? g.lineTo(x, y) : g.moveTo(x, y);
+      });
+      g.stroke();
+    });
+  }
+
+  function buildBehaviors(h) {
+    const s = section('Comportamentos');
+    const list = h.behaviors;
+    if (!list.length) {
+      s.appendChild(el('p', 'text-[11px] text-pf-muted mb-3 leading-relaxed',
+        'Nenhum. Adicione movimentos abaixo: eles começam quando a forma fica ativa e somam de cima para baixo.'));
+    }
+    list.forEach((b, i) => {
+      const def = PF.BEHAVIORS[b.type];
+      const card = el('div', 'pf-card mb-2' + (b.on ? '' : ' opacity-50'));
+      const head = el('div', 'flex items-center gap-1.5 px-2 py-1.5 cursor-pointer');
+      const caret = el('span', 'text-pf-muted transition-transform');
+      caret.innerHTML = `<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8">${ICO.open}</svg>`;
+      if (!collapsed.has(b)) caret.style.transform = 'rotate(90deg)';
+      const on = el('input', 'shrink-0');
+      on.type = 'checkbox';
+      on.checked = !!b.on;
+      on.title = 'Ligar / desligar';
+      on.addEventListener('click', e => e.stopPropagation());
+      on.addEventListener('change', () => { b.on = on.checked ? 1 : 0; P.rebuild(); PF.app.commit(); });
+      const name = el('span', 'text-xs font-semibold flex-1 truncate', (i + 1) + '. ' + def.label);
+      head.append(caret, on, name);
+      if (i > 0) head.appendChild(iconBtn('up', 'Subir (aplica antes)', () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); P.rebuild(); PF.app.commit(); }));
+      if (i < list.length - 1) head.appendChild(iconBtn('down', 'Descer (aplica depois)', () => { list.splice(i + 1, 0, list.splice(i, 1)[0]); P.rebuild(); PF.app.commit(); }));
+      head.appendChild(iconBtn('del', 'Remover', () => { list.splice(i, 1); P.rebuild(); PF.app.commit(); }));
+      head.addEventListener('click', () => { collapsed.has(b) ? collapsed.delete(b) : collapsed.add(b); P.rebuild(); });
+      card.appendChild(head);
+
+      const spark = el('div', 'px-2');
+      const cv = el('canvas', 'block w-full h-[30px]');
+      spark.appendChild(cv);
+      card.appendChild(spark);
+      requestAnimationFrame(() => drawSpark(cv, h, b));
+      let lastKey = '';
+      syncers.push(() => { // redesenha quando os valores mudam
+        const k = JSON.stringify(b) + h.active + PF.app.level.bpm;
+        if (k !== lastKey) { lastKey = k; drawSpark(cv, h, b); }
+      });
+
+      if (!collapsed.has(b)) {
+        const body = el('div', 'px-2 pt-2 pb-1');
+        for (const p of def.params) (p.type === 'select' ? selectField : numberField)(body, b, p);
+        for (const p of PF.hz.BEH_TIME) numberField(body, b, p);
+        card.appendChild(body);
+      }
+      s.appendChild(card);
+    });
+
+    // adicionar
+    const add = el('select', 'pf-select w-full mt-1');
+    const first = el('option', '', list.length >= PF.hz.MAX_BEHAVIORS ? 'Limite de ' + PF.hz.MAX_BEHAVIORS + ' comportamentos' : '+ Adicionar comportamento…');
+    first.value = '';
+    add.appendChild(first);
+    add.disabled = list.length >= PF.hz.MAX_BEHAVIORS;
+    const groups = {};
+    for (const [type, def] of Object.entries(PF.BEHAVIORS)) {
+      if (!groups[def.group]) { groups[def.group] = el('optgroup'); groups[def.group].label = def.group; add.appendChild(groups[def.group]); }
+      const o = el('option', '', def.label);
+      o.value = type;
+      groups[def.group].appendChild(o);
+    }
+    add.addEventListener('change', () => {
+      if (!add.value) return;
+      list.push(PF.hz.newBehavior(add.value));
+      // movimento curto demais para ver? estica o tempo ativa
+      if (h.active < 2) h.active = 2;
+      P.rebuild();
+      PF.app.commit();
+    });
+    s.appendChild(add);
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed',
+      '"bt" = batidas da fase (sem BPM, 1 batida = 0,5 s). "Pulsar na batida" segue a música. O tracejado no mapa é o caminho da forma.'));
   }
 
   // BPM, primeira batida, compasso e encaixe na grade
@@ -144,7 +270,7 @@
     const syncSel = () => { sel.value = app.snapOn ? String(app.snapDiv) : 'off'; };
     syncSel();
     sel.addEventListener('change', () => {
-      if (sel.value === 'off') { app.snapOn = false; PF.panel.refresh(); }
+      if (sel.value === 'off') app.setSnapOff();
       else app.setSnapDiv(Number(sel.value));
     });
     row.appendChild(sel);

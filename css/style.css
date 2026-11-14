@@ -168,6 +168,16 @@ html, body { background: var(--pf-bg); }
 
 input[type=range] { accent-color: var(--pf-accent); height: 16px; cursor: pointer; }
 
+/* cartão de comportamento no painel */
+.pf-card {
+  border: 1px solid var(--pf-line);
+  background: rgba(7, 13, 15, .55);
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
+  transition: border-color .12s;
+}
+.pf-card:hover { border-color: var(--pf-line-hi); }
+.pf-card input[type=checkbox] { accent-color: var(--pf-accent); }
+
 /* títulos de seção do painel: CH.01 · ... */
 #panel { counter-reset: ch; }
 .pf-sec { font-family: "Space Grotesk", system-ui, sans-serif; }
