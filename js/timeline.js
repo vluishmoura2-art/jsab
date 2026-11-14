@@ -186,17 +186,45 @@
       ctx.fillText(PF.HAZARDS[type].label, 26, TOP + i * LANE + LANE / 2 + 1);
     });
 
-    // playhead
-    const xp = Math.round(tx(app.t)) + 0.5;
-    if (xp >= GUT && xp <= w) {
-      ctx.fillStyle = C.accent;
-      ctx.fillRect(xp - 0.5, 0, 1.5, h);
-      ctx.beginPath();
-      ctx.moveTo(xp - 6, 0); ctx.lineTo(xp + 6, 0); ctx.lineTo(xp, 9);
-      ctx.closePath();
-      ctx.fill();
-    }
+    drawPlayhead(ctx, w, h, app);
   };
+
+  // Agulha: linha fina com cabeça em losango; tocando, deixa um rastro de brilho atrás.
+  let trail = 0; // 0..1, aparece ao tocar e some ao pausar
+  function drawPlayhead(ctx, w, h, app) {
+    const xp = Math.round(tx(app.t)) + 0.5;
+    trail += ((app.playing ? 1 : 0) - trail) * 0.15;
+    if (xp < GUT || xp > w + 40) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(GUT, 0, w - GUT, h);
+    ctx.clip();
+    if (trail > 0.01) {
+      const len = 48 * trail;
+      const g = ctx.createLinearGradient(xp - len, 0, xp, 0);
+      g.addColorStop(0, 'rgba(124,255,178,0)');
+      g.addColorStop(1, `rgba(124,255,178,${0.14 * trail})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(xp - len, RULER, len, h - RULER);
+    }
+    ctx.shadowColor = C.accent;
+    ctx.shadowBlur = 6 + 6 * trail;
+    ctx.fillStyle = C.accent;
+    ctx.fillRect(xp - 0.5, 6, 1.5, h - 6);
+    // cabeça em losango (a forma do jogador) com miolo escuro
+    const cy = 9, r = 6;
+    ctx.beginPath();
+    ctx.moveTo(xp, cy - r); ctx.lineTo(xp + r, cy); ctx.lineTo(xp, cy + r); ctx.lineTo(xp - r, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#10181B';
+    ctx.beginPath();
+    ctx.moveTo(xp, cy - 2.5); ctx.lineTo(xp + 2.5, cy); ctx.lineTo(xp, cy + 2.5); ctx.lineTo(xp - 2.5, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 
   function local(e) {
     const r = tl.canvas.getBoundingClientRect();

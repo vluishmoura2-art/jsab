@@ -23,7 +23,7 @@
 
   function section(title) {
     const s = el('section', 'px-4 py-3 border-b border-pf-line');
-    if (title) s.appendChild(el('h3', 'text-[10px] uppercase tracking-[0.18em] text-pf-muted mb-3 font-semibold', title));
+    if (title) s.appendChild(el('h3', 'pf-sec text-[10px] uppercase tracking-[0.18em] text-pf-muted mb-3 font-semibold', title));
     root.appendChild(s);
     return s;
   }

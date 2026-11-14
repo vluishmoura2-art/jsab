@@ -191,7 +191,7 @@
   function myLevel() { return PF.app.editLevel || PF.app.level; }
 
   function renderStatus() {
-    $('online-dot').className = 'inline-block w-2 h-2 rounded-full mr-1.5 ' + (O.connected ? 'bg-pf-accent shadow-[0_0_6px_#7CFFB2]' : 'bg-pf-danger');
+    $('online-dot').className = 'inline-block w-2 h-2 rotate-45 ' + (O.connected ? 'bg-pf-accent shadow-[0_0_6px_#7CFFB2]' : 'bg-pf-danger');
     $('online-count').textContent = O.connected ? String(O.online) : 'off';
     $('online-status').textContent = O.connected
       ? `Conectado · ${O.online} ${O.online === 1 ? 'pessoa' : 'pessoas'} no jogo`

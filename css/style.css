@@ -1,90 +1,225 @@
-:root { color-scheme: dark; }
-html, body { background: #0B1416; }
+/* Pulsefield — "osciloscópio noturno".
+   Papéis fixos de cor: verde = editor, vermelho = perigo, laranja = jogador, ciano = som. */
+:root {
+  color-scheme: dark;
+  --pf-bg: #0B1416;
+  --pf-void: #070D0F;
+  --pf-panel: #151E21;
+  --pf-panel2: #1B262A;
+  --pf-line: #24333A;
+  --pf-line-hi: #3A4F57;
+  --pf-text: #D8E2E4;
+  --pf-muted: #7B8D92;
+  --pf-dim: #5E7075;
+  --pf-accent: #7CFFB2;
+  --pf-hot: #B6FFD6;
+  --pf-danger: #FF4D5E;
+  --pf-player: #FFB347;
+  --pf-signal: #4DD8FF;
+  --pf-cut: 6px;                       /* tamanho do chanfro */
+  --pf-spring: cubic-bezier(.3, 1.6, .5, 1);
+}
+html, body { background: var(--pf-bg); }
+
+/* ---------- formas ---------- */
+.pf-chamfer {
+  clip-path: polygon(var(--pf-cut) 0, 100% 0, 100% calc(100% - var(--pf-cut)),
+                     calc(100% - var(--pf-cut)) 100%, 0 100%, 0 var(--pf-cut));
+}
+/* colchetes de mira nos cantos */
+.pf-bracket { position: relative; }
+.pf-bracket::before, .pf-bracket::after {
+  content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none;
+  border-color: var(--pf-accent); opacity: .55;
+}
+.pf-bracket::before { top: -1px; left: -1px; border-top: 1px solid; border-left: 1px solid; }
+.pf-bracket::after { bottom: -1px; right: -1px; border-bottom: 1px solid; border-right: 1px solid; }
 
 .logo-diamond {
   display: inline-block;
   width: 11px; height: 11px;
-  background: #FFB347;
+  background: var(--pf-player);
   transform: rotate(45deg);
   box-shadow: 0 0 12px rgba(255, 179, 71, 0.6);
 }
 
+/* ---------- botões ---------- */
 .pf-btn {
+  --cut: 5px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   font-size: 12px;
   padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid #24333A;
-  background: #1B262A;
-  color: #D8E2E4;
+  border: 1px solid var(--pf-line);
+  color: var(--pf-text);
   white-space: nowrap;
-  transition: background .12s, border-color .12s, color .12s;
+  background:
+    radial-gradient(70px circle at var(--mx, 50%) var(--my, 50%), rgba(124, 255, 178, var(--glow, 0)), transparent 70%),
+    var(--pf-panel2);
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)),
+                     calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  transition: border-color .12s, color .12s, transform .18s var(--pf-spring), --glow .2s;
 }
-.pf-btn:hover { background: #22303A; border-color: #3A4F57; }
+.pf-btn svg { flex-shrink: 0; }
+.pf-btn:hover { --glow: .14; border-color: var(--pf-line-hi); }
+.pf-btn:active { transform: scale(.96); transition-duration: .06s; }
+.pf-btn:focus { outline: none; }
+.pf-btn:focus-visible { border-color: var(--pf-accent); }
 .pf-btn:disabled { opacity: .35; pointer-events: none; }
-.pf-btn-primary { background: #FFB347; border-color: #FFB347; color: #0B1416; font-weight: 600; }
-.pf-btn-primary:hover { background: #FFC46E; border-color: #FFC46E; }
-.pf-btn-danger:hover { border-color: #FF4D5E; color: #FF4D5E; }
-
-.pf-tool {
-  width: 58px;
-  flex-shrink: 0;
-  padding: 5px 0 4px;
-  border-radius: 8px;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  color: #7B8D92;
-  border: 1px solid transparent;
-  font-size: 10px;
-  line-height: 1.1;
+.pf-btn-primary {
+  background:
+    radial-gradient(70px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, var(--glow, 0)), transparent 70%),
+    var(--pf-player);
+  border-color: var(--pf-player); color: var(--pf-bg); font-weight: 600;
 }
-.pf-tool:hover { color: #D8E2E4; background: #1B262A; }
-.pf-tool.active { color: #7CFFB2; background: rgba(124, 255, 178, 0.08); border-color: rgba(124, 255, 178, 0.35); }
-.pf-tool:disabled { opacity: .3; pointer-events: none; }
+.pf-btn-primary:hover { --glow: .35; border-color: #FFC46E; }
+.pf-btn-danger:hover { border-color: var(--pf-danger); color: var(--pf-danger); --glow: 0; }
+.pf-btn-icon { padding: 6px 7px; }
+@property --glow { syntax: '<number>'; inherits: false; initial-value: 0; }
+
+/* transporte: botões encostados, chanfro só nos cantos de fora */
+.pf-group { display: flex; align-items: center; }
+.pf-group > .pf-btn { clip-path: none; }
+.pf-group > .pf-btn + .pf-btn { margin-left: -1px; }
+.pf-group > .pf-btn:first-child { clip-path: polygon(var(--cut) 0, 100% 0, 100% 100%, 0 100%, 0 var(--cut)); }
+.pf-group > .pf-btn:last-child { clip-path: polygon(0 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%); }
+.pf-time {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--pf-accent);
+  text-shadow: 0 0 10px rgba(124, 255, 178, .35);
+}
+
+/* ---------- barra de ferramentas ---------- */
 #toolbar { scrollbar-width: none; }
 #toolbar::-webkit-scrollbar { display: none; }
-.pf-tool .kbd { font-family: "JetBrains Mono", monospace; font-size: 9px; opacity: .6; }
-
-.pf-num, .pf-text, .pf-select {
-  background: #0F181B;
-  border: 1px solid #24333A;
-  border-radius: 5px;
-  color: #D8E2E4;
+.pf-group-label {
+  width: 100%;
+  margin: 8px 0 3px;
   font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: .14em;
+  text-align: center;
+  color: var(--pf-dim);
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 6px;
+}
+.pf-group-label::before, .pf-group-label::after { content: ""; flex: 1; height: 1px; background: var(--pf-line); }
+.pf-tool {
+  position: relative;
+  width: 52px; height: 42px;
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--pf-dim);
+  font-size: 10px;
+  line-height: 1.1;
+  background: radial-gradient(40px circle at var(--mx, 50%) var(--my, 50%), rgba(124, 255, 178, var(--glow, 0)), transparent 70%);
+  transition: color .12s, transform .18s var(--pf-spring), --glow .2s;
+}
+.pf-tool::before { /* barra de seleção à esquerda */
+  content: ""; position: absolute; left: -10px; top: 22%; bottom: 22%; width: 2px;
+  background: var(--pf-accent);
+  box-shadow: 0 0 8px var(--pf-accent);
+  transform: scaleY(0);
+  transition: transform .2s var(--pf-spring);
+}
+.pf-tool svg { transition: filter .15s, transform .18s var(--pf-spring); }
+.pf-tool:hover { --glow: .1; color: var(--pf-text); }
+.pf-tool.hazard:hover { color: var(--pf-danger); }
+.pf-tool.hazard:hover svg { filter: drop-shadow(0 0 5px rgba(255, 77, 94, .55)); }
+.pf-tool:hover svg { transform: scale(1.08); }
+.pf-tool:active { transform: scale(.92); transition-duration: .06s; }
+.pf-tool.active { color: var(--pf-accent); }
+.pf-tool.active::before { transform: scaleY(1); }
+.pf-tool.active svg { filter: drop-shadow(0 0 6px rgba(124, 255, 178, .6)); }
+.pf-tool:disabled { opacity: .3; pointer-events: none; }
+.pf-tool:focus { outline: none; }
+.pf-tool:focus-visible { box-shadow: inset 0 0 0 1px rgba(124, 255, 178, .5); }
+.pf-tool .kbd {
+  position: absolute; top: 1px; right: 1px;
+  min-width: 12px; padding: 0 2px;
+  font-family: "JetBrains Mono", monospace; font-size: 8px; line-height: 11px;
+  text-align: center;
+  color: var(--pf-muted);
+  border: 1px solid var(--pf-line);
+  background: var(--pf-void);
+}
+.pf-tool.active .kbd { color: var(--pf-accent); border-color: rgba(124, 255, 178, .35); }
+.pf-tool.pf-tool-edit .kbd { position: static; border: 0; background: none; padding: 0; }
+
+/* ---------- campos ---------- */
+.pf-num, .pf-text, .pf-select {
+  background: var(--pf-void);
+  border: 1px solid var(--pf-line);
+  border-radius: 0;
+  color: var(--pf-text);
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   padding: 3px 6px;
+  transition: border-color .12s, box-shadow .12s;
 }
 .pf-num { width: 78px; text-align: right; }
-.pf-num:focus, .pf-text:focus, .pf-select:focus { outline: none; border-color: #7CFFB2; }
-.pf-unit { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #7B8D92; width: 26px; }
+.pf-num:hover, .pf-text:hover, .pf-select:hover { border-color: var(--pf-line-hi); }
+.pf-num:focus, .pf-text:focus, .pf-select:focus {
+  outline: none; border-color: var(--pf-accent);
+  box-shadow: 0 0 0 1px rgba(124, 255, 178, .15), 0 0 10px rgba(124, 255, 178, .12);
+}
+.pf-unit { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--pf-muted); width: 26px; }
 
-input[type=range] { accent-color: #7CFFB2; height: 16px; cursor: pointer; }
+input[type=range] { accent-color: var(--pf-accent); height: 16px; cursor: pointer; }
+
+/* títulos de seção do painel: CH.01 · ... */
+#panel { counter-reset: ch; }
+.pf-sec { font-family: "Space Grotesk", system-ui, sans-serif; }
+.pf-sec::before {
+  counter-increment: ch;
+  content: "CH." counter(ch, decimal-leading-zero) " · ";
+  font-family: "JetBrains Mono", monospace;
+  color: var(--pf-accent);
+  opacity: .6;
+}
 
 .pf-kbd {
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
-  color: #7CFFB2;
+  color: var(--pf-accent);
   background: rgba(124, 255, 178, 0.07);
   border: 1px solid rgba(124, 255, 178, 0.2);
-  border-radius: 4px;
   padding: 1px 5px;
   white-space: nowrap;
 }
 
+/* ---------- avisos e janelas ---------- */
 .pf-toast {
   max-width: 340px;
   font-size: 12px;
-  color: #D8E2E4;
-  background: #151E21;
+  color: var(--pf-text);
+  background: var(--pf-panel);
   border-width: 1px;
   border-left-width: 3px;
-  border-radius: 6px;
   padding: 8px 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
   transition: opacity .3s;
 }
+.pf-window { background: var(--pf-panel); border: 1px solid var(--pf-line); box-shadow: 0 24px 60px rgba(0, 0, 0, .6); }
 
+/* ---------- arena ---------- */
+#stage-wrap {
+  background-color: var(--pf-bg);
+  background-image:
+    linear-gradient(rgba(124, 255, 178, .025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 255, 178, .025) 1px, transparent 1px),
+    radial-gradient(ellipse at center, rgba(124, 255, 178, .035), transparent 65%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+}
 #stage {
-  box-shadow: 0 0 0 1px #24333A, 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 1px var(--pf-line), 0 0 0 4px var(--pf-void), 0 0 0 5px rgba(124, 255, 178, .08), 0 20px 60px rgba(0, 0, 0, 0.5);
   touch-action: none;
 }
 #stage.placing { cursor: crosshair; }
 #timeline { touch-action: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-btn, .pf-tool, .pf-tool::before, .pf-tool svg { transition: none !important; }
+}

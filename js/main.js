@@ -224,57 +224,68 @@
     curve: '<rect x="13.5" y="2.5" width="6" height="6" transform="rotate(20 16.5 5.5)" fill="currentColor"/><rect x="8" y="10" width="4.5" height="4.5" transform="rotate(40 10.25 12.25)" fill="currentColor" stroke="none"/><rect x="3.5" y="17" width="3.2" height="3.2" transform="rotate(55 5.1 18.6)" fill="currentColor" stroke="none"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
-  const TOOLS = [
-    { id: 'select', label: 'Selecionar', key: 'V' },
-    { id: 'ball', label: 'Bola', key: '1' },
-    { id: 'explosive', label: 'Explosiva', key: '2' },
-    { id: 'line', label: 'Linha', key: '3' },
-    { id: 'circle', label: 'Círculo', key: '4' },
-    { id: 'snake', label: 'Rastro', key: '5' },
-    { id: 'thunder', label: 'Trovão', key: '6' },
-    { id: 'double', label: 'Linha dupla', key: '7' },
-    { id: 'water', label: 'Água', key: '8' },
-    { id: 'wheel', label: 'Roda', key: '9' },
-    { id: 'spike', label: 'Pontuda', key: '0' },
-    { id: 'curve', label: 'Curvo', key: 'C' },
+  // agrupadas por comportamento; o nome fica no tooltip, a tecla no canto
+  const TOOL_GROUPS = [
+    { label: null, tools: [{ id: 'select', label: 'Selecionar', key: 'V' }] },
+    { label: 'PROJÉTIL', tools: [
+      { id: 'ball', label: 'Bola', key: '1' },
+      { id: 'explosive', label: 'Bola explosiva', key: '2' },
+      { id: 'wheel', label: 'Roda', key: '9' },
+    ] },
+    { label: 'ZONA', tools: [
+      { id: 'line', label: 'Linha', key: '3' },
+      { id: 'circle', label: 'Círculo', key: '4' },
+      { id: 'double', label: 'Linha dupla', key: '7' },
+      { id: 'water', label: 'Água', key: '8' },
+    ] },
+    { label: 'CORPO', tools: [
+      { id: 'snake', label: 'Rastro', key: '5' },
+      { id: 'curve', label: 'Rastro curvo', key: 'C' },
+      { id: 'spike', label: 'Plataforma pontuda', key: '0' },
+    ] },
+    { label: 'CLIMA', tools: [{ id: 'thunder', label: 'Trovão', key: '6' }] },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
-  for (const t of TOOLS) {
-    const b = document.createElement('button');
-    b.className = 'pf-tool';
-    b.title = t.label + ' (' + t.key + ')';
-    b.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">${ICON[t.id]}</svg>` +
-      `<span>${t.label}</span><span class="kbd">${t.key}</span>`;
-    b.addEventListener('click', () => setTool(t.id));
-    toolbar.appendChild(b);
-    toolBtns[t.id] = b;
-    if (t.id === 'select') {
-      const sep = document.createElement('div');
-      sep.className = 'w-8 h-px bg-pf-line my-1 shrink-0';
-      toolbar.appendChild(sep);
+  const groupLabel = text => {
+    const d = document.createElement('div');
+    d.className = 'pf-group-label shrink-0';
+    d.textContent = text;
+    toolbar.appendChild(d);
+  };
+  for (const g of TOOL_GROUPS) {
+    if (g.label) groupLabel(g.label);
+    for (const t of g.tools) {
+      const b = document.createElement('button');
+      b.className = 'pf-tool' + (t.id === 'select' ? '' : ' hazard');
+      b.title = t.label + ' (' + t.key + ')';
+      b.setAttribute('aria-label', t.label);
+      b.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">${ICON[t.id]}</svg>` +
+        `<span class="kbd">${t.key}</span>`;
+      b.addEventListener('click', () => setTool(t.id));
+      toolbar.appendChild(b);
+      toolBtns[t.id] = b;
     }
   }
   // atalhos de edição (abaixo das ferramentas)
   const EDIT_ICON = {
-    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
-    paste: '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11h6M9 15h4"/>',
-    dup: '<rect x="3" y="3" width="11" height="11" rx="2"/><rect x="10" y="10" width="11" height="11" rx="2"/><path d="M15.5 13.5v4M13.5 15.5h4"/>',
+    copy: '<path d="M8 8h12v12H8z"/><path d="M16 8V4H4v12h4"/>',
+    paste: '<path d="M5 4h14v17H5z"/><path d="M9 4V2.5h6V4M9 11h6M9 15h4"/>',
+    dup: '<path d="M3 3h11v11H3z"/><path d="M10 10h11v11H10z"/><path d="M15.5 13.5v4M13.5 15.5h4"/>',
   };
   const EDITS = [
-    { id: 'copy', label: 'Copiar', key: 'Ctrl+C', run: () => app.copy(), needs: () => !!app.selected() },
-    { id: 'paste', label: 'Colar', key: 'Ctrl+V', run: () => app.paste(), needs: () => !!app.clipboard },
-    { id: 'dup', label: 'Copiar e colar', key: 'Ctrl+D', run: () => app.duplicate(), needs: () => !!app.selected() },
+    { id: 'copy', label: 'Copiar', key: 'Ctrl+C', short: '^C', run: () => app.copy(), needs: () => !!app.selected() },
+    { id: 'paste', label: 'Colar', key: 'Ctrl+V', short: '^V', run: () => app.paste(), needs: () => !!app.clipboard },
+    { id: 'dup', label: 'Copiar e colar', key: 'Ctrl+D', short: '^D', run: () => app.duplicate(), needs: () => !!app.selected() },
   ];
-  const sep2 = document.createElement('div');
-  sep2.className = 'w-8 h-px bg-pf-line my-1 shrink-0';
-  toolbar.appendChild(sep2);
+  groupLabel('EDITAR');
   for (const t of EDITS) {
     const b = document.createElement('button');
-    b.className = 'pf-tool';
+    b.className = 'pf-tool pf-tool-edit';
     b.title = t.label + ' (' + t.key + ')';
-    b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round">${EDIT_ICON[t.id]}</svg>` +
-      `<span class="text-center">${t.label}</span><span class="kbd">${t.key}</span>`;
+    b.setAttribute('aria-label', t.label);
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${EDIT_ICON[t.id]}</svg>` +
+      `<span class="kbd">${t.short}</span>`;
     b.addEventListener('click', t.run);
     toolbar.appendChild(b);
     t.btn = b;
@@ -296,6 +307,25 @@
   }
 
   // ---------- transporte e cabeçalho ----------
+  const svg16 = (body, size = 12, fill = 'currentColor') =>
+    `<svg viewBox="0 0 16 16" width="${size}" height="${size}" fill="${fill}" stroke="currentColor" stroke-width="1.5">${body}</svg>`;
+  const BTN_HTML = {
+    play: svg16('<path d="M4 2.5v11L13 8z" stroke="none"/>') + 'Tocar',
+    pause: svg16('<rect x="3.5" y="3" width="3" height="10" stroke="none"/><rect x="9.5" y="3" width="3" height="10" stroke="none"/>') + 'Pausar',
+    test: svg16('<path d="M8 1l7 7-7 7-7-7z" stroke="none"/>') + 'Testar <span class="font-mono text-[10px] opacity-60">T</span>',
+    exitTest: svg16('<rect x="3" y="3" width="10" height="10" stroke="none"/>') + 'Sair do teste <span class="font-mono text-[10px] opacity-60">Esc</span>',
+    globe: '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" style="display:inline;vertical-align:-1px"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c2 2.2 2 10.2 0 12.4M8 1.8c-2 2.2-2 10.2 0 12.4"/></svg>',
+  };
+
+  // brilho dos botões segue o mouse
+  document.addEventListener('pointermove', e => {
+    const b = e.target.closest && e.target.closest('.pf-btn, .pf-tool');
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    b.style.setProperty('--mx', (e.clientX - r.left) + 'px');
+    b.style.setProperty('--my', (e.clientY - r.top) + 'px');
+  });
+
   const playBtn = $('btn-play'), testBtn = $('btn-test'), hud = $('hud'), timeDisplay = $('time-display');
 
   function togglePlay() {
@@ -362,7 +392,7 @@
     };
     keys.clear();
     hud.classList.remove('hidden');
-    testBtn.textContent = '■ Sair do teste';
+    testBtn.innerHTML = BTN_HTML.exitTest;
     stage.style.cursor = 'none';
     if (app.test.music) PF.audio.play(t0); // fase online sem música fica em silêncio
   }
@@ -384,7 +414,7 @@
     }
     keys.clear();
     hud.classList.add('hidden');
-    testBtn.textContent = '◆ Testar (T)';
+    testBtn.innerHTML = BTN_HTML.test;
     stage.style.cursor = '';
   }
 
@@ -458,7 +488,7 @@
 
   function hudText() {
     const T = app.test, p = T.player;
-    const hearts = (T.online ? `<span class="text-pf-accent">🌐 ${esc(T.online)}</span> · ` : '') +
+    const hearts = (T.online ? `<span class="text-pf-accent">${BTN_HTML.globe} ${esc(T.online)}</span> · ` : '') +
       `<span class="text-pf-player">${'◆'.repeat(Math.max(0, p.hp))}</span><span class="text-pf-muted">${'◇'.repeat(P.hp - Math.max(0, p.hp))}</span>`;
     if (T.over) return `${hearts} · <span class="text-pf-danger">VOCÊ PERDEU</span> · R tentar de novo · Esc editor`;
     if (T.done) return `${hearts} · <span class="text-pf-accent">FASE CONCLUÍDA</span> · acertos: ${T.hits} · R jogar de novo · Esc editor`;
@@ -667,8 +697,8 @@
 
     const tt = u.fmtTime(app.t);
     if (tt !== lastTime) { timeDisplay.textContent = tt; lastTime = tt; }
-    const pl = app.playing ? '❚❚ Pausar' : '▶ Tocar';
-    if (pl !== lastPlay) { playBtn.textContent = pl; lastPlay = pl; }
+    const pl = app.playing ? 'pause' : 'play';
+    if (pl !== lastPlay) { playBtn.innerHTML = BTN_HTML[pl]; playBtn.classList.toggle('text-pf-accent', app.playing); lastPlay = pl; }
     if (app.mode === 'test') {
       const ht = hudText();
       if (ht !== lastHud) { hud.innerHTML = ht; lastHud = ht; }
