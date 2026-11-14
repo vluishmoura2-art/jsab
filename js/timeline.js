@@ -124,6 +124,8 @@
       }
     }
 
+    drawBeatGrid(ctx, w, h, app);
+
     // blocos
     ctx.save();
     ctx.beginPath();
@@ -189,12 +191,61 @@
     drawPlayhead(ctx, w, h, app);
   };
 
+  // Grade de batidas (só com BPM): compasso forte, batida média, subdivisão do encaixe fraca.
+  // Na régua: número do compasso. A batida que a agulha acabou de passar acende.
+  function drawBeatGrid(ctx, w, h, app) {
+    const lvl = app.level, beat = app.beatLen();
+    if (!beat) return;
+    const bpb = lvl.beatsPerBar, bx = beat * tl.pps;
+    const div = app.snapOn ? app.snapDiv : 1;
+    const showSub = div > 1 && bx / div >= 9;
+    const showBeat = bx >= 6;
+    const barMode = !showSub && !showBeat;              // zoom bem longe: só compassos
+    const step = showSub ? beat / div : showBeat ? beat : beat * bpb;
+    const per = showSub ? div : 1;                      // passos por batida
+    const t0 = Math.max(lvl.offset, tl.scroll), tEnd = Math.min(lvl.duration, xt(w));
+    let i = Math.floor((t0 - lvl.offset) / step);
+    const playing = app.playing, now = app.t;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(GUT, 0, w - GUT, h);
+    ctx.clip();
+    for (let guard = 0; guard < 4000; guard++, i++) {
+      const t = lvl.offset + i * step;
+      if (t > tEnd) break;
+      const x = Math.round(tx(t)) + 0.5;
+      if (x < GUT) continue;
+      const isBeat = barMode || i % per === 0, bi = barMode ? i * bpb : i / per;
+      const isBar = isBeat && bi % bpb === 0;
+      let a = isBar ? 0.13 : isBeat ? 0.06 : 0.03;
+      if (playing && isBeat) {                          // brilho logo depois que a agulha passa
+        const since = now - t;
+        if (since >= 0 && since < 0.25) a += 0.35 * (1 - since / 0.25);
+      }
+      ctx.fillStyle = `rgba(124,255,178,${a})`;
+      ctx.fillRect(x - 0.5, RULER, 1, h - RULER);
+      if (isBar) {
+        ctx.fillStyle = 'rgba(124,255,178,0.55)';
+        ctx.fillRect(x - 0.5, RULER - 6, 1, 6);
+        if (bx * bpb >= 22) {
+          ctx.font = FONT_MONO;
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(bi / bpb + 1), x + 3, RULER - 5);
+        }
+      } else if (isBeat && showBeat) {
+        ctx.fillStyle = 'rgba(124,255,178,0.3)';
+        ctx.fillRect(x - 0.5, RULER - 3, 1, 3);
+      }
+    }
+    ctx.restore();
+  }
+
   // Agulha: linha fina com cabeça em losango; tocando, deixa um rastro de brilho atrás.
   let trail = 0; // 0..1, aparece ao tocar e some ao pausar
   function drawPlayhead(ctx, w, h, app) {
     const xp = Math.round(tx(app.t)) + 0.5;
     trail += ((app.playing ? 1 : 0) - trail) * 0.15;
-    if (xp < GUT || xp > w + 40) return;
+    if (xp < GUT - 8 || xp > w + 8) return;
     ctx.save();
     ctx.beginPath();
     ctx.rect(GUT, 0, w - GUT, h);
@@ -207,12 +258,18 @@
       ctx.fillStyle = g;
       ctx.fillRect(xp - len, RULER, len, h - RULER);
     }
+    // "kick" na batida: 1 no instante da batida, cai rápido
+    const beat = app.beatLen();
+    let kick = 0;
+    if (beat && app.playing && app.t >= app.level.offset) {
+      kick = Math.exp(-(((app.t - app.level.offset) / beat) % 1) * 9);
+    }
     ctx.shadowColor = C.accent;
-    ctx.shadowBlur = 6 + 6 * trail;
+    ctx.shadowBlur = 6 + 6 * trail + 10 * kick;
     ctx.fillStyle = C.accent;
-    ctx.fillRect(xp - 0.5, 6, 1.5, h - 6);
+    ctx.fillRect(xp - 0.5 - kick * 0.5, 6, 1.5 + kick, h - 6);
     // cabeça em losango (a forma do jogador) com miolo escuro
-    const cy = 9, r = 6;
+    const cy = 9, r = 6 * (1 + 0.3 * kick);
     ctx.beginPath();
     ctx.moveTo(xp, cy - r); ctx.lineTo(xp + r, cy); ctx.lineTo(xp, cy + r); ctx.lineTo(xp - r, cy);
     ctx.closePath();
@@ -275,8 +332,8 @@
     const h = app.level.hazards.find(z => z.id === d.id);
     if (!h) return;
     let nt = xt(x) - d.grab;
-    nt = e.altKey ? u.round(nt, 2) : Math.round(nt / 0.05) * 0.05;
-    nt = u.round(u.clamp(nt, 0, app.level.duration), 2);
+    nt = e.altKey ? u.round(nt, 2) : app.snapTime(nt);
+    nt = u.round(u.clamp(nt, 0, app.level.duration), 4);
     if (nt !== h.time) { h.time = nt; d.moved = true; app.changed(false); }
     tl.canvas.style.cursor = 'grabbing';
   }

@@ -5,7 +5,8 @@
 
   const S = PF.storage = {
     blank() {
-      return { format: 'pulsefield-level', version: PF.VERSION, name: 'Nova fase', duration: 30, spawn: { x: 320, y: 360 }, hazards: [] };
+      // bpm 0 = sem grade de batidas; offset = tempo (s) da 1ª batida; beatsPerBar = batidas por compasso
+      return { format: 'pulsefield-level', version: PF.VERSION, name: 'Nova fase', duration: 30, bpm: 0, offset: 0, beatsPerBar: 4, spawn: { x: 320, y: 360 }, hazards: [] };
     },
 
     demo() {
@@ -32,6 +33,12 @@
       if (typeof raw.name === 'string') lvl.name = raw.name.slice(0, 80);
       const d = Number(raw.duration);
       if (Number.isFinite(d) && d > 0) lvl.duration = u.clamp(d, 1, 3600);
+      const bpm = Number(raw.bpm);
+      if (Number.isFinite(bpm) && bpm > 0) lvl.bpm = u.round(u.clamp(bpm, 20, 400), 2);
+      const off = Number(raw.offset);
+      if (Number.isFinite(off)) lvl.offset = u.round(u.clamp(off, 0, 60), 3);
+      const bpb = Number(raw.beatsPerBar);
+      if (Number.isFinite(bpb)) lvl.beatsPerBar = u.clamp(Math.round(bpb), 1, 16);
       if (raw.spawn && Number.isFinite(Number(raw.spawn.x)) && Number.isFinite(Number(raw.spawn.y))) {
         lvl.spawn = { x: u.clamp(Number(raw.spawn.x), 12, PF.W - 12), y: u.clamp(Number(raw.spawn.y), 12, PF.H - 12) };
       }

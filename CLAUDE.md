@@ -25,7 +25,8 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   após dano). Generosa: só acusa impossível de verdade. Usada antes de publicar e no servidor
   (que recusa com 400). Passou do limite de tempo → aceita (`partial`).
 - `js/renderer.js` — desenho da arena, gizmos do editor e jogador
-- `js/timeline.js` — timeline em canvas (scrub, arrastar blocos, zoom)
+- `js/timeline.js` — timeline em canvas (scrub, arrastar blocos com encaixe, zoom, grade de batidas,
+  agulha em losango que dá um "kick" na batida)
 - `js/panel.js` — painel de propriedades gerado a partir de `props` de cada perigo
 - `js/storage.js` — autosave (localStorage), exportar/importar JSON (`format: "pulsefield-level"`)
 - `js/musiccheck.js` — verificação simples de direitos autorais (`PF.musicCheck`): lê só metadados
@@ -96,6 +97,15 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
 
   Fases online: publicar (com música opcional) e ver ao vivo as fases e quantas pessoas estão online;
   quem joga a fase de outra pessoa ouve a música dela.
+
+  Ritmo: a fase guarda `bpm` (0 = sem grade, senão 20–400), `offset` (s da 1ª batida) e `beatsPerBar`.
+  `app.snapTime(t)` encaixa na batida/`app.snapDiv` (1, 2, 3, 4, 8; sem BPM, passos de 0,05 s) e
+  `app.stepBeat(t, dir, bar)` anda por batida/compasso. Teclas: `,` `.` (Shift: compasso), `G` encaixe,
+  `Shift+G` subdivisão, `B` tap tempo (tocando, alinha o `offset`). `PF.toast(msg, kind, key)`: mesma
+  `key` reaproveita a caixa.
+
+  Interface: cantos chanfrados (`.pf-btn`, `.pf-chamfer`), tokens de cor em `:root` no `style.css`,
+  ícones SVG (sem emojis), barra lateral agrupada por comportamento (Projétil, Zona, Corpo, Clima).
 
 Para testar no Browser pane use o servidor de `.claude/launch.json` (`node server.js`; o pane
 não carrega scripts locais via file://). O editor continua abrindo via `index.html` direto;

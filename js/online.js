@@ -154,12 +154,23 @@
   }
 
   // ---------- avisos ----------
-  PF.toast = function (msg, kind = 'info') {
-    const t = document.createElement('div');
+  // key: avisos com a mesma chave reaproveitam a mesma caixa (ex.: tap tempo)
+  const keyed = {};
+  PF.toast = function (msg, kind = 'info', key) {
+    let t = key && keyed[key];
+    if (t) clearTimeout(t._timer);
+    else {
+      t = document.createElement('div');
+      $('toasts').appendChild(t);
+      if (key) keyed[key] = t;
+    }
     t.className = 'pf-toast ' + (kind === 'error' ? 'border-pf-danger' : 'border-pf-accent');
     t.textContent = msg;
-    $('toasts').appendChild(t);
-    setTimeout(() => { t.classList.add('opacity-0'); setTimeout(() => t.remove(), 300); }, 4500);
+    t._timer = setTimeout(() => {
+      if (key) delete keyed[key];
+      t.classList.add('opacity-0');
+      setTimeout(() => t.remove(), 300);
+    }, key ? 2500 : 4500);
   };
 
   // ---------- janela ----------

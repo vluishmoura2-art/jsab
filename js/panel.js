@@ -121,6 +121,51 @@
     s3.appendChild(el('p', 'text-xs leading-relaxed text-pf-muted', def.desc));
   }
 
+  // BPM, primeira batida, compasso e encaixe na grade
+  function buildRhythm(lvl) {
+    const app = PF.app;
+    const s = section('Ritmo');
+    const bpmRow = numberField(s, lvl, { key: 'bpm', label: 'BPM', min: 0, max: 400, step: 1, unit: '' });
+    // 1–19 não é um andamento: a troca vira 20 (0 desliga a grade)
+    bpmRow.querySelector('input').addEventListener('change', () => {
+      if (lvl.bpm > 0 && lvl.bpm < 20) { lvl.bpm = 20; PF.app.changed(true); }
+    });
+    numberField(s, lvl, { key: 'offset', label: '1ª batida', min: 0, max: 60, step: 0.01, unit: 's' });
+    numberField(s, lvl, { key: 'beatsPerBar', label: 'Batidas/compasso', min: 1, max: 16, step: 1, unit: '' });
+
+    const row = el('div', 'flex items-center justify-between gap-2 mb-2');
+    row.appendChild(el('label', 'text-xs text-pf-text/80', 'Encaixe'));
+    const sel = el('select', 'pf-select');
+    for (const [v, label] of [['off', 'Livre'], ['1', '1 batida'], ['2', '1/2'], ['3', '1/3'], ['4', '1/4'], ['8', '1/8']]) {
+      const o = el('option', '', label);
+      o.value = v;
+      sel.appendChild(o);
+    }
+    const syncSel = () => { sel.value = app.snapOn ? String(app.snapDiv) : 'off'; };
+    syncSel();
+    sel.addEventListener('change', () => {
+      if (sel.value === 'off') { app.snapOn = false; PF.panel.refresh(); }
+      else app.setSnapDiv(Number(sel.value));
+    });
+    row.appendChild(sel);
+    s.appendChild(row);
+
+    const info = el('p', 'text-[11px] text-pf-muted font-mono mt-1 mb-2');
+    const syncInfo = () => {
+      info.textContent = lvl.bpm > 0
+        ? '1 batida = ' + (60 / lvl.bpm).toFixed(3) + ' s · compasso = ' + (60 / lvl.bpm * lvl.beatsPerBar).toFixed(2) + ' s'
+        : 'BPM 0 = sem grade (encaixe a cada 0,05 s)';
+    };
+    syncInfo();
+    s.appendChild(info);
+    syncers.push(syncSel, syncInfo);
+
+    const tap = el('button', 'pf-btn w-full', 'Bater o ritmo (B)');
+    tap.title = 'Bata no ritmo da música; tocando, a última batida vira a 1ª batida';
+    tap.addEventListener('click', () => app.tapTempo());
+    s.appendChild(tap);
+  }
+
   function buildLevel() {
     const lvl = PF.app.level;
     const s = section('Fase');
@@ -136,6 +181,8 @@
     s.appendChild(row);
     numberField(s, lvl, { key: 'duration', label: 'Duração', min: 1, max: 3600, step: 1, unit: 's' });
     s.appendChild(el('p', 'text-[11px] text-pf-muted mt-2', lvl.hazards.length + ' perigo(s) na fase'));
+
+    buildRhythm(lvl);
 
     const sp = section('Jogador');
     numberField(sp, lvl.spawn, { key: 'x', label: 'Início X', min: 12, max: W - 12, step: 1, unit: 'px' });
@@ -166,6 +213,10 @@
       ['Alt', 'tempo livre ao arrastar na timeline'],
       ['Espaço', 'tocar / pausar'],
       ['← →', 'andar 0,1 s (Shift: 1 s)'],
+      [', .', 'batida anterior / seguinte (Shift: compasso)'],
+      ['G', 'encaixe na batida liga/desliga'],
+      ['Shift+G', 'trocar a subdivisão do encaixe'],
+      ['B', 'bater o ritmo para achar o BPM'],
       ['Del', 'excluir selecionado'],
       ['Ctrl+C', 'copiar o perigo selecionado'],
       ['Ctrl+V', 'colar no tempo do playhead'],

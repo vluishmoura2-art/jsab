@@ -24,6 +24,25 @@
     },
     changed(commit) { PF.panel.refresh(); if (commit) this.commit(); },
 
+    // ---- ritmo: grade de batidas ----
+    snapOn: true,
+    snapDiv: 4, // subdivisões por batida: 1, 2, 3, 4 ou 8
+    beatLen() { return this.level.bpm > 0 ? 60 / this.level.bpm : 0; },
+    // encaixa um tempo na grade (batida/snapDiv); sem BPM usa passos de 0,05 s
+    snapTime(t) {
+      const b = this.beatLen();
+      if (!b || !this.snapOn) return u.round(Math.round(t / 0.05) * 0.05, 2);
+      const step = b / this.snapDiv, o = this.level.offset;
+      return u.round(o + Math.round((t - o) / step) * step, 4);
+    },
+    // batida (ou compasso) seguinte/anterior a partir de t
+    stepBeat(t, dir, bar) {
+      const b = this.beatLen() * (bar ? this.level.beatsPerBar : 1), o = this.level.offset;
+      const i = (t - o) / b;
+      const n = dir > 0 ? Math.floor(i + 1e-6) + 1 : Math.ceil(i - 1e-6) - 1;
+      return o + n * b;
+    },
+
     editLevel: null, // fase do editor guardada enquanto uma fase online é jogada
 
     commit() {
@@ -605,6 +624,50 @@
     updateMusicUI();
   };
 
+  // ---------- ritmo: snap e tap tempo ----------
+  const SNAP_DIVS = [1, 2, 4, 8, 3];
+  const divName = d => d === 1 ? '1 batida' : '1/' + d + ' de batida';
+  function toggleSnap() {
+    app.snapOn = !app.snapOn;
+    if (PF.toast) PF.toast(app.snapOn ? 'Encaixe ligado · ' + divName(app.snapDiv) : 'Encaixe desligado · tempo livre', 'info', 'snap');
+    PF.panel.refresh();
+  }
+  function cycleSnapDiv() {
+    app.snapDiv = SNAP_DIVS[(SNAP_DIVS.indexOf(app.snapDiv) + 1) % SNAP_DIVS.length];
+    app.snapOn = true;
+    if (PF.toast) PF.toast('Encaixe em ' + divName(app.snapDiv), 'info', 'snap');
+    PF.panel.refresh();
+  }
+  PF.app.toggleSnap = toggleSnap;
+  PF.app.setSnapDiv = d => { app.snapDiv = d; app.snapOn = true; PF.panel.refresh(); };
+
+  // Bater B no ritmo: média dos últimos intervalos. Tocando, a última batida vira a referência (offset).
+  let taps = [], tapCommit = 0;
+  function tapTempo() {
+    if (app.editLevel) return;
+    const now = performance.now();
+    if (taps.length && now - taps[taps.length - 1].ms > 2000) taps = [];
+    taps.push({ ms: now, t: app.t });
+    if (taps.length > 9) taps.shift();
+    if (taps.length < 4) {
+      if (PF.toast) PF.toast('Tap tempo: continue batendo B no ritmo (' + taps.length + '/4)', 'info', 'tap');
+      return;
+    }
+    const iv = (taps[taps.length - 1].ms - taps[0].ms) / (taps.length - 1);
+    const bpm = Math.round(60000 / iv);
+    if (bpm < 20 || bpm > 400) return;
+    app.level.bpm = bpm;
+    if (app.playing) {
+      const b = 60 / bpm;
+      app.level.offset = u.round(((taps[taps.length - 1].t % b) + b) % b, 3);
+    }
+    PF.panel.refresh();
+    if (PF.toast) PF.toast(bpm + ' BPM' + (app.playing ? ' · batida alinhada à música' : ''), 'info', 'tap');
+    clearTimeout(tapCommit);
+    tapCommit = setTimeout(() => app.commit(), 1200);
+  }
+  PF.app.tapTempo = tapTempo;
+
   // ---------- teclado ----------
   window.addEventListener('keydown', e => {
     const k = e.key.toLowerCase();
@@ -652,6 +715,16 @@
       case 'c': setTool('curve'); break;
       case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
+      case 'g': if (e.shiftKey) cycleSnapDiv(); else toggleSnap(); break;
+      case 'b': if (!e.repeat) tapTempo(); break;
+      case ',': case '.': case '<': case '>': {
+        if (!app.beatLen()) { if (PF.toast) PF.toast('Defina o BPM da fase (painel da fase ou tecla B) para andar por batidas', 'info', 'bpm'); break; }
+        const fwd = k === '.' || k === '>', bar = e.shiftKey || k === '<' || k === '>';
+        app.setTime(app.stepBeat(app.t, fwd ? 1 : -1, bar));
+        PF.timeline.follow(app.t);
+        e.preventDefault();
+        break;
+      }
       case 'home': pause(); app.setTime(0); PF.timeline.scroll = 0; break;
       case 'arrowleft': app.setTime(app.t - (e.shiftKey ? 1 : 0.1)); PF.timeline.follow(app.t); e.preventDefault(); break;
       case 'arrowright': app.setTime(app.t + (e.shiftKey ? 1 : 0.1)); PF.timeline.follow(app.t); e.preventDefault(); break;
@@ -679,7 +752,12 @@
   ro.observe($('timeline-wrap'));
   resizeStage();
 
-  let last = performance.now(), lastPlay = '', lastTime = '', lastHud = '';
+  let last = performance.now(), lastPlay = '', lastTime = '', lastHud = '', lastSnap = '';
+  const snapBtn = $('btn-snap');
+  snapBtn.addEventListener('click', () => {
+    if (app.level.bpm > 0) toggleSnap();
+    else { app.select(null); if (PF.toast) PF.toast('Defina o BPM no painel da fase (Ritmo) ou bata B no ritmo', 'info', 'bpm'); }
+  });
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -697,6 +775,14 @@
 
     const tt = u.fmtTime(app.t);
     if (tt !== lastTime) { timeDisplay.textContent = tt; lastTime = tt; }
+    const lv = app.level;
+    const sn = lv.bpm > 0 ? lv.bpm + ' BPM · ' + (app.snapOn ? (app.snapDiv === 1 ? '1 bt' : '1/' + app.snapDiv) : 'livre') : 'sem BPM';
+    if (sn !== lastSnap) {
+      snapBtn.textContent = sn;
+      snapBtn.classList.toggle('text-pf-accent', lv.bpm > 0 && app.snapOn);
+      snapBtn.classList.toggle('text-pf-muted', !(lv.bpm > 0 && app.snapOn));
+      lastSnap = sn;
+    }
     const pl = app.playing ? 'pause' : 'play';
     if (pl !== lastPlay) { playBtn.innerHTML = BTN_HTML[pl]; playBtn.classList.toggle('text-pf-accent', app.playing); lastPlay = pl; }
     if (app.mode === 'test') {
