@@ -243,6 +243,16 @@
         const r1 = el('div', 'flex items-center gap-1.5');
         const tIn = miniNum(k, 't', 0, 3600, 0.05, 'Tempo da chave (s)', () => { PF.kf.sortTrack(tr); P.rebuild(); app.commit(); });
         r1.append(tIn, el('span', 'pf-unit', 's'), easeSelect(k));
+        const nums = C.fields.filter(f => f[2] !== 'color');
+        if (nums.length && o.seed) {
+          const db = iconBtn('dice', k.rnd ? 'Tirar o aleatório desta chave' : 'Valor aleatório (sorteado uma vez, fixo pela semente)', () => {
+            if (k.rnd) { delete k.rnd; delete k.rs; delete k.rk; } else { k.rnd = {}; k.rk = Math.floor(Math.random() * 2147483647); }
+            P.rebuild();
+            app.commit();
+          });
+          if (k.rnd) db.style.color = 'var(--pf-accent)';
+          r1.appendChild(db);
+        }
         r1.appendChild(iconBtn('open', 'Levar a agulha até esta chave', () => { app.setTime(o.base + k.t); PF.timeline.follow(app.t); }));
         r1.appendChild(iconBtn('del', 'Apagar chave', () => { tr.splice(i, 1); o.clean(ch); P.rebuild(); app.commit(); }));
         card.appendChild(r1);
@@ -252,6 +262,24 @@
           else r2.append(el('span', 'text-[10px] text-pf-muted', f[1]), miniNum(k, f[0], f[3], f[4], f[2] === '%' ? 1 : f[2] === '°' ? 1 : 1, f[1] + ' (' + f[2] + ')'), el('span', 'pf-unit', f[2]));
         }
         card.appendChild(r2);
+        if (k.rnd && o.seed) { // aleatório: ± por campo, encaixe e o valor que saiu neste objeto
+          const r3 = el('div', 'flex items-center gap-1.5 mt-1 flex-wrap pt-1 border-t border-pf-line');
+          for (const f of nums) {
+            if (k.rnd[f[0]] == null) k.rnd[f[0]] = 0;
+            r3.append(el('span', 'text-[10px] text-pf-accent', '±' + f[1]), miniNum(k.rnd, f[0], 0, f[4] - f[3], 1, 'Sorteia entre valor − isto e valor + isto'));
+          }
+          if (k.rs == null) k.rs = 0;
+          r3.append(el('span', 'text-[10px] text-pf-muted', 'grade'), miniNum(k, 'rs', 0, 1000, 1, 'Arredonda o sorteio para múltiplos disto (0 = livre)'));
+          card.appendChild(r3);
+          const got = el('p', 'text-[10px] font-mono text-pf-muted mt-1');
+          const fis = C.fields.map((f, fi) => [f, fi]).filter(([f]) => f[2] !== 'color');
+          const syncGot = () => {
+            got.textContent = 'sorteado: ' + fis.map(([f, fi]) => f[1] + ' ' + u.round(PF.kf.keyVal(k, f[0], fi, o.seed(), o.salt[ch]), 2)).join(' · ');
+          };
+          syncGot();
+          syncers.push(syncGot);
+          card.appendChild(got);
+        }
         // destaca a chave no tempo da agulha (ou a escolhida na timeline)
         const sync = () => {
           const sk = app.selKey, at = Math.abs(o.now() - k.t) < 0.02 || (sk && o.objId === sk.id && Math.abs(sk.t - o.base - k.t) < 1e-4);
@@ -268,9 +296,17 @@
   function buildKeys(h) {
     const n = h.keys ? Object.values(h.keys).reduce((a, t) => a + t.length, 0) : 0;
     const s = section('Keyframes', false, n);
+    const anyRnd = h.keys && Object.values(h.keys).some(tr => tr.some(k => k.rnd));
+    if (anyRnd || h.type === 'emitter') {
+      seedRow(s, () => PF.hz.seedOf(h), v => { h.seed = v; },
+        h.type === 'emitter' ? 'Sorteia as partículas e os valores aleatórios das chaves. Sem escolher, vale o #id (cópias saem diferentes).'
+          : 'Sorteia os valores aleatórios das chaves (dado). Sem escolher, vale o #id: cópias saem diferentes; com a mesma semente, iguais.');
+    }
     keyEditor(s, {
       spec: PF.KF_CHANNELS,
       objId: h.id,
+      seed: () => PF.hz.seedOf(h),
+      salt: { pos: 1, rot: 2, scl: 3, col: 4 },
       base: h.time,
       now: () => PF.app.t - h.time,
       get: ch => h.keys && h.keys[ch],
@@ -280,7 +316,19 @@
     });
     s.appendChild(el('p', 'text-[10px] text-pf-muted mt-2 leading-relaxed',
       'Tempo conta do início do objeto. Posição soma à posição base; rotação e escala acontecem em volta da ' + (h.type === 'shape' || h.type === 'group' ? 'pivô' : 'origem') +
-      '. A curva de cada chave vale para o trecho que chega nela. K = chave na agulha · Shift+K = posição, rotação e escala · com chaves de posição, arrastar no mapa grava a posição na agulha · Delete apaga a chave escolhida na timeline.'));
+      '. A curva de cada chave vale para o trecho que chega nela. O dado sorteia o valor da chave (± por campo, fixo pela semente). K = chave na agulha · Shift+K = posição, rotação e escala · com chaves de posição, arrastar no mapa grava a posição na agulha · Delete apaga a chave escolhida na timeline.'));
+  }
+
+  // semente do aleatório: número + "Sortear" (troca por outra)
+  function seedRow(s, get, set, hint) {
+    const proxy = { get v() { return get(); }, set v(x) { set(Math.round(x)); } };
+    const row = numberField(s, proxy, { key: 'v', label: 'Semente', min: 0, max: 999999, step: 1, unit: '' });
+    const b = el('button', 'pf-btn pf-btn-icon ml-1');
+    b.title = 'Sortear outra semente';
+    b.innerHTML = `<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6">${ICO.dice}</svg>`;
+    b.addEventListener('click', () => { set(1 + Math.floor(Math.random() * 999998)); PF.app.changed(true); });
+    row.lastChild.appendChild(b);
+    s.appendChild(el('p', 'text-[10px] text-pf-muted mb-2 leading-relaxed', hint));
   }
 
   // ---------- parentesco ----------
@@ -394,6 +442,7 @@
     down: '<path d="M4 6l4 4 4-4"/>',
     del: '<path d="M4 4l8 8M12 4l-8 8"/>',
     open: '<path d="M6 4l4 4-4 4"/>',
+    dice: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><circle cx="5.5" cy="5.5" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="10.5" cy="10.5" r=".9" fill="currentColor"/>',
   };
   function iconBtn(name, title, run) {
     const b = el('button', 'pf-btn pf-btn-icon');
@@ -1052,8 +1101,12 @@
     const camN = Object.values(lvl.cam).reduce((a, t) => a + t.length, 0);
     s = section('Câmera', true, camN);
     if (s) {
+      if (Object.values(lvl.cam).some(tr => tr.some(k => k.rnd))) {
+        seedRow(s, () => lvl.seed || 0, v => { if (v) lvl.seed = v; else delete lvl.seed; }, 'Sorteia os valores aleatórios das chaves da câmera (dado).');
+      }
       keyEditor(s, {
         spec: PF.CAM_CHANNELS, base: 0, now: () => app.t,
+        seed: () => lvl.seed || 0, salt: { pos: 11, zoom: 12, rot: 13, shake: 14 },
         get: ch => lvl.cam[ch],
         ensure: ch => lvl.cam[ch] || (lvl.cam[ch] = []),
         clean: ch => { if (lvl.cam[ch] && !lvl.cam[ch].length) delete lvl.cam[ch]; },

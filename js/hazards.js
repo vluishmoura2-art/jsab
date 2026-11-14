@@ -1495,7 +1495,7 @@
       if (lt < 0) return;
       const last = Math.floor(Math.min(lt, h.dur) * h.rate);
       const first = Math.max(0, Math.ceil((lt - h.plife) * h.rate), last - MAX_PARTICLES);
-      const seed = (h.id % 997) + 0.5;
+      const seed = (seedOf(h) % 997) + 0.5;
       for (let i = first; i <= last; i++) {
         const age = lt - i / h.rate;
         if (age < 0 || age > h.plife) continue;
@@ -1577,16 +1577,19 @@
     return h.life > 0 ? Math.min(n, h.life) : n;
   };
   const originOf = h => [h.x + (h.ox || 0), h.y + (h.oy || 0)];
+  // semente do aleatório (keyframes, partículas): a escolhida no painel ou o número do objeto
+  function seedOf(h) { return h.seed != null ? h.seed : h.id; }
   // estado dos keyframes no tempo local lt
   function animState(h, lt) {
     const k = h.keys;
     let dx = 0, dy = 0, r = 0, sx = 1, sy = 1;
     if (k) {
-      const p = k.pos && PF.kf.sample(k.pos, lt, KF.pos.fields);
+      const sd = seedOf(h);
+      const p = k.pos && PF.kf.sample(k.pos, lt, KF.pos.fields, sd, 1);
       if (p) { dx = p.x; dy = p.y; }
-      const q = k.rot && PF.kf.sample(k.rot, lt, KF.rot.fields);
+      const q = k.rot && PF.kf.sample(k.rot, lt, KF.rot.fields, sd, 2);
       if (q) r = q.v;
-      const s = k.scl && PF.kf.sample(k.scl, lt, KF.scl.fields);
+      const s = k.scl && PF.kf.sample(k.scl, lt, KF.scl.fields, sd, 3);
       if (s) { sx = s.x / 100; sy = s.y / 100; }
     }
     return { dx, dy, r, sx, sy };
@@ -1792,6 +1795,7 @@
     },
     // ---- camada genérica (keyframes, parentesco, tempo de vida) ----
     lifeLen,
+    seedOf,
     animState,
     animMatrix,
     animColor,
@@ -1901,6 +1905,8 @@
       // camada genérica: só grava o que foi usado (o JSON das fases antigas não muda)
       const keys = PF.kf.normTracks(raw.keys, KF);
       if (keys) h.keys = keys;
+      const sd = raw.seed == null ? NaN : Number(raw.seed);
+      if (Number.isInteger(sd) && sd >= 0) h.seed = Math.min(sd, 999999);
       const life = num(raw.life, 0);
       if (life > 0 && !def.lifeKey) h.life = u.round(u.clamp(life, 0.05, 3600), 4);
       if (h.type !== 'shape' && h.type !== 'group' && h.type !== 'prefab') { // Forma/Grupo já têm pivô

@@ -22,6 +22,12 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
   `stepMarker`). Trilha = `[{ t, e, ...campos }]` ordenada; a curva `e` vale para o trecho que CHEGA na
   chave (linear, instant, Sine/Quad/Cubic/Expo/Elastic/Back/Bounce in/out/inOut). Carregado antes do
   `transform.js` (também no `vm` do servidor).
+  Aleatório nas chaves (dado no cartão): `rnd: { campo: amplitude }` sorteia em valor ± amplitude,
+  `rs` encaixa em múltiplos, `rk` = número fixo da chave (mover no tempo não re-sorteia). Sorteio por
+  `hash01` inteiro (igual no navegador e no servidor), só quando `sample` recebe `seed`: objetos usam
+  `PF.hz.seedOf(h)` (`h.seed` ou o #id — cópias saem diferentes), câmera usa `level.seed`. Sem
+  semente `sample` devolve o valor base (é o que criar/atualizar chaves usa). Cor não tem aleatório.
+  A semente também sorteia as partículas do emissor.
 - `js/transform.js` — matriz afim 2D (`PF.m`: `compose(x, y, rot, sx, sy, px, py)` = girar/escalar em
   volta do pivô, `mul`, `apply`, `invert`, `rotateAround`). Carregado antes de `hazards.js` (também no `vm`).
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).

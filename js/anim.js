@@ -111,23 +111,44 @@
     }
     return r;
   }
-  // valor da trilha no tempo t (objeto com os campos), ou null se a trilha está vazia
-  function sample(track, t, fields) {
+  // ---------- aleatório fixo ----------
+  // hash inteiro (igual em qualquer navegador e no servidor) → número em [0, 1)
+  function hash01(a, b, c, d) {
+    let h = Math.imul((a | 0) ^ 0x9E3779B9, 0x85EBCA6B);
+    h ^= Math.imul(b | 0, 0xC2B2AE35); h = Math.imul(h ^ (h >>> 16), 0x27D4EB2F);
+    h ^= Math.imul(c | 0, 0x165667B1); h = Math.imul(h ^ (h >>> 13), 0x9E3779B1);
+    h ^= Math.imul(d | 0, 0x7FEB352D); h ^= h >>> 15; h = Math.imul(h, 0x2C1B3C6D); h ^= h >>> 12;
+    return (h >>> 0) / 4294967296;
+  }
+  // valor de um campo da chave: com "rnd", sorteia em [v - amp, v + amp] (fixo pela semente, pelo
+  // tempo da chave e pelo campo) e, com "rs", encaixa em múltiplos de rs. seed null = valor base.
+  function keyVal(k, key, fi, seed, salt) {
+    const v = k[key];
+    if (seed == null || !k.rnd || !k.rnd[key]) return v;
+    // rk: número fixo da chave (mover a chave no tempo não muda o sorteio)
+    let r = v + (hash01(seed, salt, k.rk != null ? k.rk : Math.round(k.t * 1000), fi) * 2 - 1) * k.rnd[key];
+    if (k.rs > 0) r = Math.round(r / k.rs) * k.rs;
+    return r;
+  }
+  // valor da trilha no tempo t (objeto com os campos), ou null se a trilha está vazia.
+  // seed (opcional): liga o aleatório das chaves; salt separa canais com a mesma semente
+  function sample(track, t, fields, seed, salt = 0) {
     const n = track ? track.length : 0;
     if (!n) return null;
     const i = seek(track, t);
     const out = {};
     if (i < 0 || i >= n - 1) {
       const k = track[i < 0 ? 0 : n - 1];
-      for (const f of fields) out[f[0]] = k[f[0]];
+      fields.forEach((f, fi) => { out[f[0]] = keyVal(k, f[0], fi, seed, salt); });
       return out;
     }
     const a = track[i], b = track[i + 1];
     const p = ease(b.e)(b.t > a.t ? (t - a.t) / (b.t - a.t) : 1);
-    for (const f of fields) {
+    fields.forEach((f, fi) => {
       const k = f[0];
-      out[k] = f[2] === 'color' ? mixHex(a[k], b[k], u.clamp(p, 0, 1)) : a[k] + (b[k] - a[k]) * p;
-    }
+      if (f[2] === 'color') out[k] = mixHex(a[k], b[k], u.clamp(p, 0, 1));
+      else { const va = keyVal(a, k, fi, seed, salt); out[k] = va + (keyVal(b, k, fi, seed, salt) - va) * p; }
+    });
     return out;
   }
   // põe (ou atualiza) uma chave no tempo t; devolve a chave
@@ -163,7 +184,24 @@
           else ok = false;
         }
       }
-      if (ok) out.push(k);
+      if (!ok) continue;
+      // aleatório: amplitude por campo numérico (só grava o que for > 0) e encaixe opcional
+      if (r.rnd && typeof r.rnd === 'object') {
+        let rnd = null;
+        for (const f of fields) {
+          if (f[2] === 'color') continue;
+          const a = Number(r.rnd[f[0]]);
+          if (Number.isFinite(a) && a > 0) (rnd || (rnd = {}))[f[0]] = u.round(Math.min(a, f[4] - f[3]), 3);
+        }
+        if (rnd) {
+          k.rnd = rnd;
+          const rs = Number(r.rs);
+          if (Number.isFinite(rs) && rs > 0) k.rs = u.round(Math.min(rs, 1000), 3);
+          const rk = Number(r.rk);
+          if (Number.isInteger(rk) && rk >= 0) k.rk = Math.min(rk, 2147483647);
+        }
+      }
+      out.push(k);
     }
     sortTrack(out);
     // mesmo tempo duas vezes: fica a última
@@ -231,6 +269,8 @@
         sortTrack(lvl.checkpoints);
       }
       lvl.cam = normTracks(raw.cam, PF.CAM_CHANNELS) || {};
+      const seed = Number(raw.seed);
+      if (Number.isInteger(seed) && seed > 0) lvl.seed = Math.min(seed, 999999); // aleatório da câmera
       lvl.theme = normTrack(raw.theme, PF.THEME_FIELDS);
       lvl.bg = [];
       if (Array.isArray(raw.bg)) {
@@ -254,8 +294,9 @@
     // câmera no tempo t: centro deslocado (x, y), zoom (fator), rotação (°) e tremor (px)
     camAt(level, t) {
       const c = (level && level.cam) || {}, CH = PF.CAM_CHANNELS;
-      const p = sample(c.pos, t, CH.pos.fields), z = sample(c.zoom, t, CH.zoom.fields);
-      const r = sample(c.rot, t, CH.rot.fields), s = sample(c.shake, t, CH.shake.fields);
+      const sd = (level && level.seed) || 0; // aleatório das chaves da câmera: semente da fase
+      const p = sample(c.pos, t, CH.pos.fields, sd, 11), z = sample(c.zoom, t, CH.zoom.fields, sd, 12);
+      const r = sample(c.rot, t, CH.rot.fields, sd, 13), s = sample(c.shake, t, CH.shake.fields, sd, 14);
       return { x: p ? p.x : 0, y: p ? p.y : 0, zoom: z ? Math.max(0.1, z.v / 100) : 1, rot: r ? r.v : 0, shake: s ? s.v : 0 };
     },
     hasCam(level) { const c = level && level.cam; return !!c && Object.keys(c).some(k => c[k] && c[k].length); },
@@ -268,5 +309,5 @@
     },
   };
 
-  PF.kf = { sample, setKey, seek, sortTrack, normTrack, normTracks, mixHex, rgba, rgb, HEX, MAX_KEYS };
+  PF.kf = { sample, setKey, seek, hash01, keyVal, sortTrack, normTrack, normTracks, mixHex, rgba, rgb, HEX, MAX_KEYS };
 })();
