@@ -17,6 +17,8 @@ Sem frameworks, engines de jogo ou bundlers sem pedido explícito.
 ## Estrutura
 
 - `js/config.js` — constantes, paleta, utilitários (`PF.u`)
+- `js/transform.js` — matriz afim 2D (`PF.m`: `compose(x, y, rot, sx, sy, px, py)` = girar/escalar em
+  volta do pivô, `mul`, `apply`, `invert`, `rotateAround`). Carregado antes de `hazards.js` (também no `vm`).
 - `js/hazards.js` — definição dos perigos (`PF.HAZARDS`) e helpers (`PF.hz`).
   Cada perigo é uma função pura do tempo: `shapes(h, tempoLocal, out)` gera formas
   `circle | ring | line | rect | poly` com estado `warn | active | fx`. Só `active` causa dano.
@@ -103,6 +105,13 @@ Fontes: Space Grotesk (UI/títulos) e JetBrains Mono (números/timeline).
   `app.stepBeat(t, dir, bar)` anda por batida/compasso. Teclas: `,` `.` (Shift: compasso), `G` encaixe,
   `Shift+G` subdivisão, `B` tap tempo (tocando, alinha o `offset`). `PF.toast(msg, kind, key)`: mesma
   `key` reaproveita a caixa.
+
+  Forma livre (modo manual, tecla F, faixa "Forma"): perigo `shape` com `kind` 0 círculo, 1 quadrado,
+  2 triângulo, 3 laser; `w`/`h` (laser: comprimento/grossura), `rot`, pivô `pivotX/pivotY` (do centro,
+  antes de girar; `x,y` é onde o pivô fica), cheia/vazada (vazada = uma `line` por lado), aviso → ativa → some.
+  No mapa: bolinha de cima gira (Shift 15°), quadradinho do canto muda o tamanho (Shift proporcional),
+  Alt+arrastar move o pivô sem mexer na forma (`PF.shapeHandles` no renderer). Próximas etapas do
+  modo manual: pilha de comportamentos, telegrafia, grupos/repetidor, gatilhos.
 
   Interface: cantos chanfrados (`.pf-btn`, `.pf-chamfer`), tokens de cor em `:root` no `style.css`,
   ícones SVG (sem emojis), barra lateral agrupada por comportamento (Projétil, Zona, Corpo, Clima).

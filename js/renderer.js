@@ -251,6 +251,10 @@
           ctx.moveTo(x - 6, y1 - d * 8); ctx.lineTo(x, y1); ctx.lineTo(x + 6, y1 - d * 8);
           ctx.stroke();
         }
+      } else if (h.type === 'shape') {
+        shapeGizmo(ctx, h, sel, scale);
+        ctx.restore();
+        continue;
       } else if (h.type === 'thunder') {
         // faixa da nuvem e setas no sentido da queda
         const top = !h.side, band = 34, y0 = top ? 0 : H - band;
@@ -273,6 +277,59 @@
       ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
       ctx.restore();
     }
+  }
+
+  // Alças da Forma no mundo: giro (bolinha acima), tamanho (canto) e pivô (losango em x,y).
+  PF.shapeHandles = function (h, scale) {
+    const m = PF.hz.shapeMatrix(h);
+    return {
+      rot: PF.m.apply(m, 0, -h.h / 2 - 30 / scale),
+      top: PF.m.apply(m, 0, -h.h / 2),
+      size: PF.m.apply(m, h.w / 2, h.h / 2),
+      pivot: [h.x, h.y],
+    };
+  };
+
+  function shapeGizmo(ctx, h, sel, scale) {
+    const m = PF.hz.shapeMatrix(h);
+    ctx.beginPath();
+    if (h.kind === 3) { // laser: retângulo do comprimento × grossura
+      const loc = [-h.w / 2, -h.h / 2, h.w / 2, -h.h / 2, h.w / 2, h.h / 2, -h.w / 2, h.h / 2];
+      for (let i = 0; i < 8; i += 2) { const [x, y] = PF.m.apply(m, loc[i], loc[i + 1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    } else {
+      const loc = PF.hz.shapeLocal(h);
+      for (let i = 0; i < loc.length; i += 2) { const [x, y] = PF.m.apply(m, loc[i], loc[i + 1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    }
+    ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const hd = PF.shapeHandles(h, scale), r = (sel ? 6 : 4.5) / scale;
+    if (sel) {
+      // centro da forma → pivô (mostra em volta de onde ela gira)
+      const [cx, cy] = PF.m.apply(m, 0, 0);
+      if (Math.hypot(cx - h.x, cy - h.y) > 2) {
+        ctx.globalAlpha = 0.5;
+        ctx.setLineDash([2 / scale, 4 / scale]);
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(h.x, h.y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+      ctx.beginPath(); // haste e bolinha de giro
+      ctx.moveTo(hd.top[0], hd.top[1]); ctx.lineTo(hd.rot[0], hd.rot[1]);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(hd.rot[0], hd.rot[1], 5 / scale, 0, TAU);
+      ctx.fillStyle = C.bg; ctx.fill(); ctx.stroke();
+      const s = 4.5 / scale; // quadradinho do tamanho
+      ctx.fillStyle = C.accent;
+      ctx.fillRect(hd.size[0] - s, hd.size[1] - s, s * 2, s * 2);
+    }
+    // pivô: losango (a cor do acento quando selecionado)
+    ctx.beginPath();
+    ctx.moveTo(h.x, h.y - r); ctx.lineTo(h.x + r, h.y); ctx.lineTo(h.x, h.y + r); ctx.lineTo(h.x - r, h.y);
+    ctx.closePath();
+    ctx.fillStyle = sel ? C.accent : C.muted;
+    ctx.fill();
   }
 
   function spawnMarker(ctx, app, scale) {

@@ -19,19 +19,22 @@
   const circleHit = key => (h, x, y, tol) => Math.hypot(x - h.x, y - h.y) <= Math.max(h[key], tol);
 
   // Linha e círculo compartilham o mesmo ciclo: aviso -> ativo -> some.
+  // make() devolve a forma a empurrar, ou nada (quando ela mesma já empurrou em "out").
   function appearCycle(h, lt, out, make) {
     if (lt < 0) return;
+    let s;
     if (h.warn > 0 && lt < h.warn) {
       const p = lt / h.warn;
-      out.push(make({ state: 'warn', alpha: 0.05 + 0.35 * p, scale: 1 }));
+      s = make({ state: 'warn', alpha: 0.05 + 0.35 * p, scale: 1 });
     } else if (lt < h.warn + h.active) {
       const a = lt - h.warn;
       const pop = a < 0.1 ? 1 + 0.35 * (1 - a / 0.1) : 1;
-      out.push(make({ state: 'active', alpha: 1, scale: pop }));
+      s = make({ state: 'active', alpha: 1, scale: pop });
     } else {
       const f = (lt - h.warn - h.active) / FADE;
-      if (f < 1) out.push(make({ state: 'fx', alpha: 1 - f, scale: 1 - f }));
+      if (f < 1) s = make({ state: 'fx', alpha: 1 - f, scale: 1 - f });
     }
+    if (s) out.push(s);
   }
 
   const WARN_PROP = { key: 'warn', label: 'Tempo para aparecer', min: 0, max: 10, step: 0.05, unit: 's' };
@@ -620,6 +623,72 @@
     hit: (h, x, y, tol) => Math.hypot(x - h.x, y - h.y) <= Math.max(h.size * 0.75, tol),
   };
 
+  // Forma (modo manual): círculo, quadrado, triângulo ou laser com rotação e ponto de pivô.
+  // (x, y) é onde fica o pivô; pivotX/pivotY é o pivô em relação ao centro da forma, antes de girar.
+  const SHP_CIRCLE = 0, SHP_SQUARE = 1, SHP_TRI = 2, SHP_LASER = 3;
+  const shapeMatrix = (h, k = 1) => PF.m.compose(h.x, h.y, h.rot, k, k, h.pivotX, h.pivotY);
+  // contorno da forma em coords locais (centro em 0,0), como lista x,y,x,y…
+  function shapeLocal(h) {
+    const w2 = h.w / 2, h2 = h.h / 2;
+    if (h.kind === SHP_SQUARE) return [-w2, -h2, w2, -h2, w2, h2, -w2, h2];
+    if (h.kind === SHP_TRI) return [0, -h2, w2, h2, -w2, h2];
+    const n = 32, pts = []; // elipse
+    for (let i = 0; i < n; i++) { const a = TAU * i / n; pts.push(Math.cos(a) * w2, Math.sin(a) * h2); }
+    return pts;
+  }
+  // formas prontas para desenhar/colidir, com escala extra k (o "pop" ao aparecer)
+  function shapeOut(h, k, base, out) {
+    const m = shapeMatrix(h, k);
+    if (h.kind === SHP_LASER) {
+      const [x1, y1] = PF.m.apply(m, -h.w / 2, 0), [x2, y2] = PF.m.apply(m, h.w / 2, 0);
+      out.push({ ...base, kind: 'line', x1, y1, x2, y2, w: h.h * k });
+      return;
+    }
+    if (h.kind === SHP_CIRCLE && h.w === h.h) { // círculo de verdade: mais barato que o polígono
+      const [x, y] = PF.m.apply(m, 0, 0), r = h.w / 2 * k;
+      if (h.hollow) out.push({ ...base, kind: 'ring', x, y, r, w: Math.min(h.stroke, h.w) * k });
+      else out.push({ ...base, kind: 'circle', x, y, r });
+      return;
+    }
+    const loc = shapeLocal(h), pts = [];
+    for (let i = 0; i < loc.length; i += 2) pts.push(...PF.m.apply(m, loc[i], loc[i + 1]));
+    if (!h.hollow) { out.push({ ...base, kind: 'poly', pts }); return; }
+    const n = pts.length / 2; // vazada: uma linha por lado, centrada no contorno
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      out.push({ ...base, kind: 'line', x1: pts[i * 2], y1: pts[i * 2 + 1], x2: pts[j * 2], y2: pts[j * 2 + 1], w: h.stroke * k });
+    }
+  }
+
+  PF.HAZARDS.shape = {
+    label: 'Forma',
+    desc: 'Forma livre: círculo, quadrado, triângulo ou laser, do tamanho e no ângulo que você quiser. Ela gira em volta do ponto de pivô (o losango verde). No mapa: arraste para mover, a bolinha de cima gira (Shift: de 15 em 15°), o quadradinho do canto muda o tamanho (Shift: proporcional) e Alt+arrastar muda o pivô sem mexer na forma.',
+    defaults: { kind: SHP_SQUARE, w: 120, h: 120, rot: 0, pivotX: 0, pivotY: 0, hollow: 0, stroke: 16, warn: 0.6, active: 1 },
+    props: [
+      { key: 'kind', label: 'Forma', type: 'select', options: [[SHP_CIRCLE, 'Círculo'], [SHP_SQUARE, 'Quadrado'], [SHP_TRI, 'Triângulo'], [SHP_LASER, 'Laser']] },
+      { key: 'w', label: 'Largura (laser: comprimento)', min: 4, max: 3000, step: 1, unit: 'px' },
+      { key: 'h', label: 'Altura (laser: grossura)', min: 2, max: 3000, step: 1, unit: 'px' },
+      { key: 'rot', label: 'Rotação', min: -360, max: 360, step: 1, unit: '°' },
+      { key: 'pivotX', label: 'Pivô X (do centro)', min: -1500, max: 1500, step: 1, unit: 'px' },
+      { key: 'pivotY', label: 'Pivô Y (do centro)', min: -1500, max: 1500, step: 1, unit: 'px' },
+      { key: 'hollow', label: 'Preenchimento', type: 'select', options: [[0, 'Cheia'], [1, 'Vazada']] },
+      { key: 'stroke', label: 'Grossura do contorno (vazada)', min: 2, max: 200, step: 1, unit: 'px' },
+      WARN_PROP,
+      ACTIVE_PROP,
+    ],
+    lead: () => 0,
+    warnLen: h => h.warn,
+    length: h => h.warn + h.active + FADE,
+    shapes(h, lt, out) {
+      appearCycle(h, lt, out, ({ state, alpha, scale }) => { shapeOut(h, scale, { state, alpha }, out); });
+    },
+    hit(h, x, y, tol) {
+      const tmp = [];
+      shapeOut(h, 1, { state: 'active', alpha: 1 }, tmp);
+      return tmp.some(s => PF.hz.hitsPlayer(s, x, y, tol)) || Math.hypot(x - h.x, y - h.y) <= tol * 1.5;
+    },
+  };
+
   // Linha dupla: caixa da faixa conforme o modo; tempo da onda de entrada/saída
   const DBL_WAVE = 0.3, DBL_OUT = 0.55;
   function doubleBox(h) {
@@ -647,6 +716,8 @@
     lineEnds,
     doubleBox,
     spikePts,
+    shapeMatrix,
+    shapeLocal,
     curvePos,
     curveRun,
     create(type, x, y, time) {

@@ -178,6 +178,22 @@
       drag = { id: h.id, dx: 0, dy: 0, moved: true };
       return;
     }
+    // alças da Forma selecionada: giro, tamanho, e Alt+arrastar para mudar o pivô
+    const cur = app.selected();
+    if (cur && cur.type === 'shape') {
+      const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+      if (near(hd.rot)) {
+        // ângulo do pivô até a alça, sem a rotação: a alça fica embaixo do mouse ao girar
+        const [lx, ly] = [0 - cur.pivotX, -cur.h / 2 - 30 / view.scale - cur.pivotY];
+        drag = { id: cur.id, kind: 'rot', base: Math.atan2(ly, lx) * 180 / Math.PI, moved: false };
+        return;
+      }
+      if (near(hd.size)) { drag = { id: cur.id, kind: 'size', moved: false }; return; }
+      if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) {
+        drag = { id: cur.id, kind: 'pivot', moved: false };
+        return;
+      }
+    }
     const sp = app.level.spawn;
     if (Math.hypot(p.x - sp.x, p.y - sp.y) <= 16) {
       app.select(null);
@@ -201,12 +217,20 @@
       if (app.tool === 'select') {
         const sp = app.level.spawn;
         const overSpawn = Math.hypot(p.x - sp.x, p.y - sp.y) <= 16;
+        const cur = app.selected();
+        if (cur && cur.type === 'shape') {
+          const hd = PF.shapeHandles(cur, view.scale), near = q => Math.hypot(p.x - q[0], p.y - q[1]) <= 9 / view.scale;
+          if (near(hd.rot)) { stage.style.cursor = 'grab'; return; }
+          if (near(hd.size)) { stage.style.cursor = 'nwse-resize'; return; }
+          if (e.altKey && PF.HAZARDS.shape.hit(cur, p.x, p.y, 10 / view.scale)) { stage.style.cursor = 'crosshair'; return; }
+        }
         stage.style.cursor = overSpawn || pick(p.x, p.y) ? 'move' : 'default';
       }
       return;
     }
     const h = drag.spawn ? app.level.spawn : app.level.hazards.find(z => z.id === drag.id);
     if (!h) return;
+    if (drag.kind) { shapeDrag(h, p, e); return; }
     let nx = p.x + drag.dx, ny = p.y + drag.dy;
     if (e.shiftKey) { nx = Math.round(nx / 40) * 40; ny = Math.round(ny / 40) * 40; }
     const m = drag.spawn ? -12 : 400; // o início do jogador fica dentro da arena
@@ -224,6 +248,37 @@
     }
     if (nx !== h.x || ny !== h.y) { h.x = nx; h.y = ny; drag.moved = true; app.changed(false); }
   });
+  // arrastar uma alça da Forma
+  function shapeDrag(h, p, e) {
+    const set = (k, v) => { if (h[k] !== v) { h[k] = v; drag.moved = true; } };
+    if (drag.kind === 'rot') {
+      let a = Math.atan2(p.y - h.y, p.x - h.x) * 180 / Math.PI - drag.base;
+      if (e.shiftKey) a = Math.round(a / 15) * 15;
+      a = ((Math.round(a) + 540) % 360) - 180; // -180..180
+      set('rot', a);
+    } else if (drag.kind === 'size') {
+      // mouse nas coords locais da forma (centro em 0,0): tamanho = 2× a distância ao centro
+      const [lx, ly] = PF.m.apply(PF.m.invert(PF.hz.shapeMatrix(h)), p.x, p.y);
+      let w = Math.abs(lx) * 2, hh = Math.abs(ly) * 2;
+      if (e.shiftKey && h.kind !== 3) { const s = Math.max(w, hh); w = hh = s; }
+      set('w', u.clamp(Math.round(w), 4, 3000));
+      if (h.kind !== 3) set('h', u.clamp(Math.round(hh), 2, 3000)); // no laser a altura é a grossura
+    } else if (drag.kind === 'pivot') {
+      // o pivô vai para o mouse e a forma fica parada: converte o ponto para coords locais
+      const [lx, ly] = PF.m.apply(PF.m.invert(PF.hz.shapeMatrix(h)), p.x, p.y);
+      let nx = Math.round(p.x), ny = Math.round(p.y), px = Math.round(lx), py = Math.round(ly);
+      if (e.shiftKey && Math.hypot(lx, ly) < 24 / view.scale) { // Shift perto do centro: volta para o centro
+        const [cx, cy] = PF.m.apply(PF.hz.shapeMatrix(h), 0, 0);
+        nx = cx; ny = cy; px = 0; py = 0;
+      }
+      if (px !== h.pivotX || py !== h.pivotY) {
+        h.pivotX = u.clamp(px, -1500, 1500); h.pivotY = u.clamp(py, -1500, 1500);
+        h.x = u.clamp(nx, -400, W + 400); h.y = u.clamp(ny, -400, H + 400);
+        drag.moved = true;
+      }
+    }
+    if (drag.moved) app.changed(false);
+  }
   const endDrag = () => { if (drag && drag.moved) app.commit(); drag = null; };
   stage.addEventListener('pointerup', endDrag);
   stage.addEventListener('pointercancel', endDrag);
@@ -241,6 +296,7 @@
     wheel: '<circle cx="12" cy="4.5" r="2.3"/><circle cx="19.5" cy="12" r="2.3"/><circle cx="12" cy="19.5" r="2.3"/><circle cx="4.5" cy="12" r="2.3"/><circle cx="17.3" cy="6.7" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.3" r="1.6" fill="currentColor" stroke="none"/><circle cx="6.7" cy="6.7" r="1.6" fill="currentColor" stroke="none"/>',
     spike: '<path d="M10 3h8a2.5 2.5 0 0 1 2.5 2.5V21H10l-4-2 4-2-4-2 4-2-4-2 4-2-4-2 4-2-4-2z" fill="currentColor"/>',
     curve: '<rect x="13.5" y="2.5" width="6" height="6" transform="rotate(20 16.5 5.5)" fill="currentColor"/><rect x="8" y="10" width="4.5" height="4.5" transform="rotate(40 10.25 12.25)" fill="currentColor" stroke="none"/><rect x="3.5" y="17" width="3.2" height="3.2" transform="rotate(55 5.1 18.6)" fill="currentColor" stroke="none"/>',
+    shape: '<circle cx="8" cy="8" r="5"/><path d="M12 12h9v9h-9z" fill="currentColor"/><path d="M15.5 2.5l4.5 7.5h-9z"/><path d="M3 21l6-6" stroke-width="2.6" stroke-linecap="round"/>',
     snake: '<rect x="15" y="8" width="7" height="7" fill="currentColor"/><rect x="8.5" y="9" width="5" height="5" fill="currentColor" stroke="none"/><rect x="3" y="10" width="3.5" height="3.5" fill="currentColor" stroke="none"/>',
   };
   // agrupadas por comportamento; o nome fica no tooltip, a tecla no canto
@@ -263,6 +319,7 @@
       { id: 'spike', label: 'Plataforma pontuda', key: '0' },
     ] },
     { label: 'CLIMA', tools: [{ id: 'thunder', label: 'Trovão', key: '6' }] },
+    { label: 'MANUAL', tools: [{ id: 'shape', label: 'Forma livre', key: 'F' }] },
   ];
   const toolbar = $('toolbar');
   const toolBtns = {};
@@ -713,6 +770,7 @@
       case '9': setTool('wheel'); break;
       case '0': setTool('spike'); break;
       case 'c': setTool('curve'); break;
+      case 'f': setTool('shape'); break;
       case 'delete': case 'backspace': app.deleteSelected(); e.preventDefault(); break;
       case 't': startTest(); break;
       case 'g': if (e.shiftKey) cycleSnapDiv(); else toggleSnap(); break;

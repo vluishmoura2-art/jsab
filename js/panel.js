@@ -207,6 +207,8 @@
     const s2 = section('Como usar');
     const items = [
       ['1 – 9, 0','escolher perigo e clicar no mapa'],
+      ['F', 'forma livre (círculo, quadrado, triângulo, laser)'],
+      ['Alt+arrastar', 'mudar o pivô da forma'],
       ['V / Esc', 'ferramenta de seleção'],
       ['Arrastar', 'mover no mapa ou na timeline'],
       ['Shift', 'encaixar na grade ao arrastar'],
